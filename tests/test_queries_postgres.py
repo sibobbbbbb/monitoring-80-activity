@@ -135,6 +135,24 @@ def test_series_rows_for_requested_items_include_every_machine_in_time_order(see
     assert isinstance(got["value"].iloc[0], D)                                # Decimal, bukan float
 
 
+def test_one_chart_is_one_item_cek_even_when_characteristics_names_collide(pg_engine):
+    """Karakteristik bernama sama pada Part/Operation berbeda = item cek berbeda, tidak pernah dicampur
+    dalam satu chart; garis dalam satu chart hanya berbeda mesin."""
+    from tests.test_ingestion import T0, frame, row
+    rest = row()[5:]
+    upsert_measurements(pg_engine, frame(
+        ("Part X", "Op 1", "M1", "Same Name", T0, *rest),
+        ("Part X", "Op 1", "M2", "Same Name", T0, *rest),
+        ("Part Y", "Op 2", "M3", "Same Name", T0, *rest),
+    ))
+    start, end = day_range_utc(date(2026, 1, 1), date(2026, 1, 31))              # T0 = 5 Januari 2026
+    f = Filters(start=start, end=end)
+    assert len(item_summary(pg_engine, f)) == 2                                  # dua item cek, bukan satu
+    got = series_rows(pg_engine, f, [("Part X", "Op 1", "Same Name")])
+    assert set(got["part"]) == {"Part X"} and set(got["operation"]) == {"Op 1"}
+    assert set(got["machine"]) == {"M1", "M2"}                                   # mesin berbeda, item cek sama
+
+
 def test_series_rows_never_returns_no_standard_items(seeded):
     got = series_rows(seeded, everything(), [("Demo Conrod", "Op 30 Honing", "Weight (info)")])
     assert got.empty
