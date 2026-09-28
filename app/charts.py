@@ -3,6 +3,10 @@
 Dipilih nilai XChart (satuan asli), bukan rasio: engineer membaca chart ini seperti control chart FEXQMS,
 dan garis batas berada di nilai sebenarnya. Perbandingan lintas item ada pada badge dan urutan grid
 (rasio), yang selalu ternormalisasi.
+
+Keterbacaan: garis tren tipis dan lembut; titik WARNING/NG diberi warna isi zona (bukan cincin, yang
+menumpuk bila banyak titik ditandai); titik terakhir tiap mesin ditonjolkan karena itulah yang menentukan
+status; zona WARNING dan NG diberi latar tipis sehingga posisi terhadap batas terbaca sekilas.
 """
 from dataclasses import dataclass
 from decimal import Decimal
@@ -19,10 +23,22 @@ ZONE_COLORS = {"OK": "#2e9e5b", "WARNING": "#e0a100", "NG": "#d64545"}
 MACHINE_PALETTE = ["#4c78a8", "#8e6bbf", "#1aa7a7", "#d970b0", "#9c6b4e", "#7b8794", "#2b4a8b", "#b8a1e3"]
 LIMIT_COLOR, WARNING_COLOR = ZONE_COLORS["NG"], ZONE_COLORS["WARNING"]
 
+MARKER_SIZE = 6      # titik OK: warna mesin
+FLAG_SIZE = 9        # titik WARNING/NG: warna zona
+LAST_SIZE = 12       # titik terakhir tiap mesin: outline putih
+LINE_WIDTH = 1.1
+LINE_ALPHA = 0.55    # garis dibuat lembut agar titik yang menonjol
+BAND_ALPHA = {"WARNING": 0.10, "NG": 0.07}
+
 
 def machine_colors(machines: Iterable[str]) -> dict[str, str]:
     """Warna konsisten per mesin di seluruh grid."""
     return {m: MACHINE_PALETTE[i % len(MACHINE_PALETTE)] for i, m in enumerate(sorted(set(machines)))}
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
 
 
 def _num(v) -> Optional[Decimal]:
@@ -61,7 +77,20 @@ def _draw(fig: go.Figure, lim: Limits, color_limit: str, color_warn: str, width:
                                xanchor="left", xshift=4, font=dict(size=9, color=color))
 
 
-def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 270) -> go.Figure:
+def _bands(fig: go.Figure, lim: Limits, bottom: float, top: float) -> None:
+    """Latar tipis: WARNING (antara batas 80% dan batas), NG (di luar batas). Sisi tanpa batas 80% dilewati."""
+    def band(y0, y1, zone):
+        fig.add_hrect(y0=y0, y1=y1, fillcolor=ZONE_COLORS[zone], opacity=BAND_ALPHA[zone], line_width=0, layer="below")
+
+    if lim.usl is not None and lim.uwl is not None:
+        band(lim.uwl, lim.usl, "WARNING")
+        band(lim.usl, top, "NG")
+    if lim.lsl is not None and lim.lwl is not None:
+        band(lim.lsl, lim.lwl, "WARNING")
+        band(bottom, lim.lsl, "NG")
+
+
+def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 300) -> go.Figure:
     """rows: deret satu item cek (semua mesin) dari app.queries.series_rows."""
     d = rows.copy()
     d["x"] = d["measured_at"].dt.tz_convert(WIB).dt.tz_localize(None)   # sumbu waktu dalam WIB
@@ -69,45 +98,54 @@ def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 270) ->
     d["r"] = d["ratio"].astype(float)
     d = d.sort_values("x")
     machines = sorted(d["machine"].unique())
+    multi = len(machines) > 1
 
     fig = go.Figure()
     for m in machines:
         g = d[d["machine"] == m]
+        base = colors.get(m, MACHINE_PALETTE[0])
+        last = [False] * (len(g) - 1) + [True]
+        flagged = [z != "OK" for z in g["zone"]]
         fig.add_trace(go.Scatter(
-            x=g["x"], y=g["y"], mode="lines+markers", name=m,
-            line=dict(color=colors.get(m, MACHINE_PALETTE[0]), width=1.6), marker=dict(size=4),
+            x=g["x"], y=g["y"], mode="lines+markers", name=m, showlegend=False,
+            line=dict(color=_rgba(base, LINE_ALPHA), width=LINE_WIDTH),
+            marker=dict(
+                color=[ZONE_COLORS[z] if z != "OK" else base for z in g["zone"]],
+                size=[LAST_SIZE if l else FLAG_SIZE if f else MARKER_SIZE for f, l in zip(flagged, last)],
+                line=dict(color=["rgba(255,255,255,0.95)" if l else "rgba(0,0,0,0.35)" for l in last],
+                          width=[2 if l else 0.6 for l in last]),
+            ),
             customdata=g["r"],
             hovertemplate=f"{m}<br>%{{x|%d %b %H:%M}}<br>XChart: %{{y}}<br>Rasio: %{{customdata:.1%}}<extra></extra>",
         ))
-    flagged = d[d["zone"] != "OK"]                     # cincin merah/kuning di titik WARNING/NG
-    if not flagged.empty:
-        fig.add_trace(go.Scatter(
-            x=flagged["x"], y=flagged["y"], mode="markers", showlegend=False, hoverinfo="skip",
-            marker=dict(symbol="circle-open", size=10, color="rgba(0,0,0,0)",
-                        line=dict(width=2, color=[ZONE_COLORS[z] for z in flagged["zone"]]))))
+        if multi:   # warna titik berubah per zona, jadi legenda memakai trace khusus berwarna mesin
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=m, showlegend=True,
+                                     line=dict(color=base, width=3)))
 
-    # Batas per mesin (dari baris terbaru). Sama untuk semua mesin -> satu set garis berlabel;
-    # berbeda -> garis per mesin dengan warna mesin.
+    # Batas per mesin (dari baris terbaru). Sama untuk semua mesin -> satu set garis berlabel + latar zona;
+    # berbeda -> garis per mesin dengan warna mesin (tanpa latar, karena zonanya berbeda-beda).
     spec = d.groupby("machine").tail(1).set_index("machine")
     per_machine = {m: limits_of(spec.at[m, "nominal"], spec.at[m, "usl"], spec.at[m, "lsl"]) for m in machines}
     distinct = set(per_machine.values())
-    all_limits: list[float] = []
-    if len(distinct) == 1:
-        lim = next(iter(distinct))
-        _draw(fig, lim, LIMIT_COLOR, WARNING_COLOR, 1.3, label=True)
-        all_limits = lim.values()
-    else:
-        for m, lim in per_machine.items():
-            _draw(fig, lim, colors.get(m, LIMIT_COLOR), colors.get(m, WARNING_COLOR), 0.9, label=False)
-            all_limits += lim.values()
+    all_limits = [v for lim in distinct for v in lim.values()]
 
     lo, hi = min([d["y"].min(), *all_limits]), max([d["y"].max(), *all_limits])
     pad = (hi - lo) * 0.08 or 1.0
+    bottom, top = lo - pad, hi + pad
+
+    if len(distinct) == 1:
+        lim = next(iter(distinct))
+        _bands(fig, lim, bottom, top)
+        _draw(fig, lim, LIMIT_COLOR, WARNING_COLOR, 1.3, label=True)
+    else:
+        for m, lim in per_machine.items():
+            _draw(fig, lim, colors.get(m, LIMIT_COLOR), colors.get(m, WARNING_COLOR), 0.9, label=False)
+
     fig.update_layout(
-        height=height, showlegend=len(machines) > 1, hovermode="closest",
-        margin=dict(l=8, r=62, t=26 if len(machines) > 1 else 8, b=8),
+        height=height, showlegend=multi, hovermode="closest",
+        margin=dict(l=8, r=62, t=26 if multi else 8, b=8),
         legend=dict(orientation="h", x=0, y=1.0, yanchor="bottom", font=dict(size=10)),
-        xaxis=dict(tickformat="%d %b", showgrid=False),
-        yaxis=dict(range=[lo - pad, hi + pad], automargin=True),
+        xaxis=dict(tickformat="%d %b", showgrid=False, nticks=6),
+        yaxis=dict(range=[bottom, top], automargin=True, gridcolor="rgba(128,128,128,0.18)", zeroline=False),
     )
     return fig

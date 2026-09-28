@@ -3,7 +3,9 @@ from decimal import Decimal
 
 import pandas as pd
 
-from app.charts import MACHINE_PALETTE, ZONE_COLORS, item_chart, limits_of, machine_colors
+from app.charts import (
+    FLAG_SIZE, LAST_SIZE, MACHINE_PALETTE, MARKER_SIZE, ZONE_COLORS, item_chart, limits_of, machine_colors,
+)
 from app.summary import summarize_zones
 from app.timeutil import day_range_utc, format_wib
 from core.rules import compute_ratio
@@ -84,10 +86,19 @@ def rows(machine, values, usl="0.2", lsl="0", nominal=None, start="2026-01-05 01
     })
 
 
+def hlines(fig):
+    return sorted(round(s.y0, 6) for s in fig.layout.shapes if s.type == "line")
+
+
+def rects(fig):
+    return [s for s in fig.layout.shapes if s.type == "rect"]
+
+
 class TestItemChart:
     colors = machine_colors(["M1", "M2", "M3"])
 
     def lines(self, fig):
+        """Trace data (bukan trace legenda)."""
         return [t for t in fig.data if t.mode == "lines+markers"]
 
     def test_one_line_per_machine_named_after_machine(self):
@@ -96,31 +107,34 @@ class TestItemChart:
         assert [t.name for t in self.lines(fig)] == ["M1", "M2"]
         assert fig.layout.showlegend is True
 
+    def test_legend_uses_machine_colours_not_zone_colours(self):
+        df = pd.concat([rows("M1", [0.17, 0.06]), rows("M2", [0.07, 0.08])])       # titik pertama M1 WARNING
+        legend = [t for t in item_chart(df, self.colors).data if t.showlegend]
+        assert [(t.name, t.line.color) for t in legend] == [("M1", self.colors["M1"]), ("M2", self.colors["M2"])]
+
     def test_single_machine_has_no_legend(self):
         fig = item_chart(rows("M1", [0.05, 0.06]), self.colors)
-        assert len(self.lines(fig)) == 1 and fig.layout.showlegend is False
+        assert len(self.lines(fig)) == 1 and fig.layout.showlegend is False and len(fig.data) == 1
 
     def test_reference_lines_usl_lsl_and_80_percent_with_labels(self):
         fig = item_chart(rows("M1", [0.05, 0.06]), self.colors)
-        ys = sorted(round(s.y0, 6) for s in fig.layout.shapes)
-        assert ys == [0.0, 0.16, 0.2]                                            # LSL, batas 80%, USL
-        labels = sorted(a.text for a in fig.layout.annotations)
-        assert labels == ["80% 0.16", "LSL 0", "USL 0.2"]
+        assert hlines(fig) == [0.0, 0.16, 0.2]                                    # LSL, batas 80%, USL
+        assert sorted(a.text for a in fig.layout.annotations) == ["80% 0.16", "LSL 0", "USL 0.2"]
 
     def test_two_sided_has_four_reference_lines(self):
         df = rows("M1", [10.1, 10.2], usl="10.5", lsl="9.5", nominal=D("10"))
-        fig = item_chart(df, self.colors)
-        assert sorted(round(s.y0, 6) for s in fig.layout.shapes) == [9.5, 9.6, 10.4, 10.5]
+        assert hlines(item_chart(df, self.colors)) == [9.5, 9.6, 10.4, 10.5]
 
     def test_shared_limits_drawn_once_for_multiple_machines(self):
         df = pd.concat([rows("M1", [0.05, 0.06]), rows("M2", [0.07, 0.08])])
-        assert len(item_chart(df, self.colors).layout.shapes) == 3
+        assert len(hlines(item_chart(df, self.colors))) == 3
 
     def test_different_limits_per_machine_draw_per_machine_lines_in_machine_color(self):
         df = pd.concat([rows("M1", [0.05, 0.06], usl="0.2"), rows("M2", [0.07, 0.08], usl="0.3")])
         fig = item_chart(df, self.colors)
-        assert len(fig.layout.shapes) == 6 and len(fig.layout.annotations) == 0     # tanpa label, warna mesin
-        assert {s.line.color for s in fig.layout.shapes} == {self.colors["M1"], self.colors["M2"]}
+        lines = [s for s in fig.layout.shapes if s.type == "line"]
+        assert len(lines) == 6 and len(fig.layout.annotations) == 0               # tanpa label, warna mesin
+        assert {s.line.color for s in lines} == {self.colors["M1"], self.colors["M2"]}
 
     def test_y_range_always_contains_all_limits_and_data(self):
         lo, hi = item_chart(rows("M1", [0.02, 0.03]), self.colors).layout.yaxis.range
@@ -134,18 +148,46 @@ class TestItemChart:
         fig = item_chart(rows("M1", [0.05], start="2026-01-05 01:00"), self.colors)
         assert pd.Timestamp(self.lines(fig)[0].x[0]) == pd.Timestamp("2026-01-05 08:00")
 
-    def test_non_ok_points_get_zone_colored_rings(self):
-        fig = item_chart(rows("M1", [0.05, 0.17, 0.25]), self.colors)              # OK, WARNING, NG
-        ring = [t for t in fig.data if t.mode == "markers"][0]
-        assert list(ring.marker.line.color) == [ZONE_COLORS["WARNING"], ZONE_COLORS["NG"]]
+    def test_flagged_points_are_filled_with_their_zone_colour(self):
+        fig = item_chart(rows("M1", [0.05, 0.17, 0.25, 0.06]), self.colors)       # OK, WARNING, NG, OK(terakhir)
+        m = self.lines(fig)[0].marker
+        assert list(m.color) == [self.colors["M1"], ZONE_COLORS["WARNING"], ZONE_COLORS["NG"], self.colors["M1"]]
 
-    def test_no_ring_trace_when_all_ok(self):
-        fig = item_chart(rows("M1", [0.05, 0.06]), self.colors)
-        assert all(t.mode == "lines+markers" for t in fig.data)
+    def test_flagged_points_are_larger_and_last_point_is_emphasised_with_outline(self):
+        fig = item_chart(rows("M1", [0.05, 0.17, 0.06]), self.colors)
+        m = self.lines(fig)[0].marker
+        assert list(m.size) == [MARKER_SIZE, FLAG_SIZE, LAST_SIZE]
+        assert MARKER_SIZE >= 6 and MARKER_SIZE < FLAG_SIZE < LAST_SIZE
+        assert list(m.line.width) == [0.6, 0.6, 2] and m.line.color[-1].startswith("rgba(255,255,255")
 
-    def test_line_uses_consistent_machine_color(self):
-        fig = item_chart(rows("M2", [0.05, 0.06]), self.colors)
-        assert self.lines(fig)[0].line.color == self.colors["M2"]
+    def test_each_machine_gets_its_own_emphasised_last_point(self):
+        df = pd.concat([rows("M1", [0.05, 0.06]), rows("M2", [0.07, 0.08, 0.09])])
+        sizes = [list(t.marker.size) for t in self.lines(item_chart(df, self.colors))]
+        assert [s[-1] for s in sizes] == [LAST_SIZE, LAST_SIZE] and [len(s) for s in sizes] == [2, 3]
+
+    def test_no_open_symbols_are_used(self):
+        """Regresi: simbol '*-open' mengabaikan marker.line.color, sehingga tandanya hitam dan tak terlihat."""
+        fig = item_chart(rows("M1", [0.05, 0.17, 0.25]), self.colors)
+        assert all("open" not in str(t.marker.symbol) for t in fig.data)
+
+    def test_line_is_soft_so_markers_stand_out(self):
+        line = self.lines(item_chart(rows("M2", [0.05, 0.06]), self.colors))[0].line
+        assert line.width <= 1.5 and line.color.startswith("rgba(")
+
+    def test_warning_and_ng_background_bands_for_upper_limit(self):
+        fig = item_chart(rows("M1", [0.05, 0.06]), self.colors)                   # LSL=ref=0: hanya sisi atas
+        bands = rects(fig)
+        assert sorted((round(b.y0, 6), b.fillcolor) for b in bands)[:2] == [
+            (0.16, ZONE_COLORS["WARNING"]), (0.2, ZONE_COLORS["NG"])]
+        assert len(bands) == 2 and all(b.layer == "below" for b in bands)
+
+    def test_two_sided_has_four_background_bands(self):
+        df = rows("M1", [10.1, 10.2], usl="10.5", lsl="9.5", nominal=D("10"))
+        assert len(rects(item_chart(df, self.colors))) == 4
+
+    def test_no_bands_when_limits_differ_between_machines(self):
+        df = pd.concat([rows("M1", [0.05, 0.06], usl="0.2"), rows("M2", [0.07, 0.08], usl="0.3")])
+        assert rects(item_chart(df, self.colors)) == []
 
     def test_hover_shows_ratio(self):
         fig = item_chart(rows("M1", [0.05]), self.colors)
