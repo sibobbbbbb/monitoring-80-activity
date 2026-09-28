@@ -55,7 +55,7 @@ CH, CS, CR = ("Demo Cyl.Head", "Op 140-180"), ("Demo Crankshaft", "Op 20 Grindin
 CATALOG: tuple[ItemSpec, ...] = (
     # ---- Demo Cyl.Head / Op 140-180 : satu sisi tanpa nominal (LSL=0, ref=0) dan dua sisi ----
     ItemSpec(*CH, "True Pos Hole 1", D("0.2"), D("0"), None,
-             (_m("CH-A", 0.35, 1.15, 0.07), _m("CH-B", 0.85, sigma=0.07), _m("CH-C", 0.25, sigma=0.10))),
+             (_m("CH-A", 0.35, 1.15, 0.07), _m("CH-B", 0.62, 0.86, 0.09), _m("CH-C", 0.25, sigma=0.10))),
     ItemSpec(*CH, "True Pos Hole 2", D("0.2"), D("0"), None,
              (_m("CH-A", 0.30, sigma=0.12), _m("CH-B", 0.50, 0.95, 0.10))),
     ItemSpec(*CH, "Flatness Face", D("0.05"), D("0"), None,
@@ -78,7 +78,7 @@ CATALOG: tuple[ItemSpec, ...] = (
     ItemSpec(*CR, "Small End Bore", None, D("19.990"), D("20.000"),
              (_m("HN-1", -0.50, -0.98, 0.06),), decimals=4),
     ItemSpec(*CR, "Surface Roughness", D("1.6"), D("0"), None,
-             (_m("HN-1", 0.40, sigma=0.15), _m("HN-2", 0.80, sigma=0.10))),
+             (_m("HN-1", 0.40, sigma=0.15), _m("HN-2", 0.60, 0.84, 0.10))),
     ItemSpec(*CR, "Weight (info)", None, None, None,
              (_m("HN-1", 0.0),), info_base=350.0),
 )
