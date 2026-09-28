@@ -1,20 +1,26 @@
 """Query dashboard terhadap Postgres sungguhan, dengan data dummy yang masuk lewat db/ingestion.py.
 Nilai yang diharapkan dihitung ulang di pandas secara independen dari SQL."""
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
 
 from app.queries import (
-    Filters, filter_options, item_summary, last_ingested_at, no_standard_item_count, series_rows, time_bounds,
+    Filters,
+    filter_options,
+    item_summary,
+    last_ingested_at,
+    no_standard_item_count,
+    series_rows,
+    time_bounds,
 )
 from app.timeutil import day_range_utc
 from db.ingestion import upsert_measurements
 from scripts.generate_dummy_data import build_dummy_frame
 
-END = datetime(2026, 9, 28, tzinfo=timezone.utc)
-INGESTED = datetime(2026, 9, 28, 3, 0, tzinfo=timezone.utc)
+END = datetime(2026, 9, 28, tzinfo=UTC)
+INGESTED = datetime(2026, 9, 28, 3, 0, tzinfo=UTC)
 ITEM = ["part", "operation", "characteristics"]
 D = Decimal
 
@@ -37,7 +43,7 @@ def everything():
 
 def expected_summary(df):
     std = df[df["zone"] != "NO_STANDARD"]
-    last = std.sort_values("measured_at").groupby(ITEM + ["machine"]).tail(1)
+    last = std.sort_values("measured_at").groupby([*ITEM, "machine"]).tail(1)
     out = last.groupby(ITEM).agg(latest_ratio=("ratio", "max"), machine_count=("machine", "size"))
     out["max_ratio"] = std.groupby(ITEM)["ratio"].max()
     return out
@@ -112,7 +118,8 @@ def test_date_range_filter_uses_wib_days(seeded, data):
     week = summary_by_item(item_summary(seeded, Filters(start=start, end=end)))
     full = summary_by_item(item_summary(seeded, everything()))
     assert list(week["latest_ratio"]) == list(full["latest_ratio"])          # kondisi terakhir sama
-    assert all(w <= f for w, f in zip(week["max_ratio"], full["max_ratio"]))  # puncak rentang pendek <= penuh
+    # puncak di rentang pendek tidak mungkin melebihi puncak rentang penuh
+    assert all(w <= f for w, f in zip(week["max_ratio"], full["max_ratio"], strict=True))
     start, end = day_range_utc(date(2026, 1, 1), date(2026, 1, 2))
     assert item_summary(seeded, Filters(start=start, end=end)).empty
 
@@ -126,7 +133,7 @@ def test_no_standard_items_counted_separately(seeded):
 def test_series_rows_for_requested_items_include_every_machine_in_time_order(seeded, data):
     items = [("Demo Cyl.Head", "Op 140-180", "True Pos Hole 1"), ("Demo Conrod", "Op 30 Honing", "Surface Roughness")]
     got = series_rows(seeded, everything(), items)
-    assert set(zip(got["part"], got["operation"], got["characteristics"])) == set(items)
+    assert set(zip(got["part"], got["operation"], got["characteristics"], strict=True)) == set(items)
     assert set(got[got["characteristics"] == "True Pos Hole 1"]["machine"]) == {"CH-A", "CH-B", "CH-C"}
     assert got.groupby(["characteristics", "machine"])["measured_at"].apply(lambda s: s.is_monotonic_increasing).all()
     want = data[data.set_index(ITEM).index.isin(items)]

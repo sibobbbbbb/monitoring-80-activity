@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import NamedTuple, Optional, Union
+from typing import NamedTuple
 
 import openpyxl
 import pandas as pd
@@ -30,6 +30,7 @@ OUTPUT_COLUMNS = [
 ]
 
 Grid = list[list[object]]
+_DUPLICATE_LABEL_FIELDS = ("machine", "characteristics", "measured_at")
 
 
 class InvalidFileError(ValueError):
@@ -51,7 +52,7 @@ class RowWarning:
     """Baris valid tapi tidak dipakai (mis. ditimpa baris lain dengan kunci sama)."""
     row_number: int
     reason: str
-    overwritten_by: Optional[int] = None  # nomor baris yang menimpa (duplikat kunci)
+    overwritten_by: int | None = None  # nomor baris yang menimpa (duplikat kunci)
 
 
 class ImportResult(NamedTuple):
@@ -60,7 +61,6 @@ class ImportResult(NamedTuple):
     warnings: list[RowWarning]
 
 
-# ---- membaca file menjadi grid sel --------------------------------------------------------------
 
 def _grids_from_csv(raw: bytes) -> list[Grid]:
     text = raw.decode("utf-8-sig")  # BOM dari Excel merusak sel pertama bila tidak dibuang
@@ -82,9 +82,8 @@ def _read_grids(raw: bytes, filename: str) -> list[Grid]:
     raise InvalidFileError(f"Format file tidak didukung: {suffix}")
 
 
-# ---- utilitas sel ---------------------------------------------------------------------------------
 
-def _text(v) -> Optional[str]:
+def _text(v) -> str | None:
     """Teks sel dirapikan; None untuk sel kosong. Angka 0 BUKAN kosong (mis. LSL=0)."""
     if v is None:
         return None
@@ -92,14 +91,14 @@ def _text(v) -> Optional[str]:
     return s or None
 
 
-def _to_decimal(v, label: str) -> Optional[Decimal]:
+def _to_decimal(v, label: str) -> Decimal | None:
     s = _text(v)
     if s is None:
         return None
     try:
         d = Decimal(s.replace(",", "."))
     except InvalidOperation:
-        raise ValueError(f"{label} bukan angka: {s!r}")
+        raise ValueError(f"{label} bukan angka: {s!r}") from None
     if not d.is_finite():
         raise ValueError(f"{label} bukan angka hingga: {s!r}")
     return d
@@ -113,14 +112,18 @@ def _to_utc(v, source_tz: timezone) -> pd.Timestamp:
         try:
             ts = pd.Timestamp(s)
         except (ValueError, TypeError):
-            raise ValueError(f"Sample Date Time bukan tanggal/waktu valid: {s!r}")
+            raise ValueError(f"Sample Date Time bukan tanggal/waktu valid: {s!r}") from None
     if pd.isna(ts):
         raise ValueError(f"Sample Date Time bukan tanggal/waktu valid: {v!r}")
     ts = ts.tz_localize(source_tz) if ts.tzinfo is None else ts
     return ts.tz_convert("UTC")
 
 
-# ---- struktur file --------------------------------------------------------------------------------
+
+def _cell(row: list, cols: dict[str, int], field_name: str):
+    j = cols.get(field_name)
+    return row[j] if j is not None and j < len(row) else None
+
 
 def _find_table(grids: list[Grid], mapping: ExportMapping) -> tuple[Grid, int, dict[str, int]]:
     """Cari sheet dan baris judul tabel yang memuat semua kolom wajib."""
@@ -159,12 +162,15 @@ def _read_header(grid: Grid, header_end: int, mapping: ExportMapping) -> dict[st
     return found
 
 
-# ---- parsing --------------------------------------------------------------------------------------
+
+def _key_label(key: tuple) -> str:
+    return ", ".join(f"{k}={v}" for k, v in zip(KEY_FIELDS, key, strict=True) if k in _DUPLICATE_LABEL_FIELDS)
+
 
 def parse_grids(
     grids: list[Grid],
     mapping: ExportMapping = DEFAULT_MAPPING,
-    source_batch: Optional[str] = None,
+    source_batch: str | None = None,
     source_utc_offset_hours: int = DEFAULT_SOURCE_UTC_OFFSET_HOURS,
 ) -> ImportResult:
     grid, header_row, cols = _find_table(grids, mapping)
@@ -179,7 +185,7 @@ def parse_grids(
         lsl = _to_decimal(header.get("lsl"), "LSL di header")
         nominal = _to_decimal(header.get("nominal"), "Nominal di header")
     except ValueError as exc:
-        raise InvalidFileError(str(exc))
+        raise InvalidFileError(str(exc)) from exc
 
     source_tz = timezone(timedelta(hours=source_utc_offset_hours))
     identity = {f: _text(header[f]) for f in mapping.required_header}
@@ -195,11 +201,7 @@ def parse_grids(
         if not any(_text(c) for c in row):
             continue  # baris kosong di bawah/antara tabel
         try:
-            def cell(field_name):
-                j = cols.get(field_name)
-                return row[j] if j is not None and j < len(row) else None
-
-            raw_time, raw_value = cell("measured_at"), cell("value")
+            raw_time, raw_value = _cell(row, cols, "measured_at"), _cell(row, cols, "value")
             empty = [mapping.table_columns[f] for f, v in (("measured_at", raw_time), ("value", raw_value))
                      if _text(v) is None]
             if empty:
@@ -207,7 +209,7 @@ def parse_grids(
 
             rec_identity = dict(identity)
             for f in mapping.per_row_identity:  # nilai per baris (bila terisi) mengalahkan header
-                override = _text(cell(f))
+                override = _text(_cell(row, cols, f))
                 if override is not None:
                     rec_identity[f] = override
 
@@ -239,12 +241,8 @@ def parse_grids(
     warnings: list[RowWarning] = []
     for key, earlier_rows in overwritten.items():
         final_row = survivors[key][0]
-        label = ", ".join(f"{k}={v}" for k, v in zip(KEY_FIELDS, key) if k in ("machine", "characteristics", "measured_at"))
-        for r in earlier_rows:
-            warnings.append(RowWarning(
-                r, f"Baris ditimpa oleh baris {final_row} (kunci sama: {label})",
-                overwritten_by=final_row,
-            ))
+        reason = f"Baris ditimpa oleh baris {final_row} (kunci sama: {_key_label(key)})"
+        warnings.extend(RowWarning(r, reason, overwritten_by=final_row) for r in earlier_rows)
     warnings.sort(key=lambda w: w.row_number)
 
     rows = [rec for _, rec in sorted(survivors.values(), key=lambda t: t[0])]
@@ -258,7 +256,7 @@ def load_measurements_from_bytes(
     data: bytes,
     filename: str,
     mapping: ExportMapping = DEFAULT_MAPPING,
-    source_batch: Optional[str] = None,
+    source_batch: str | None = None,
     source_utc_offset_hours: int = DEFAULT_SOURCE_UTC_OFFSET_HOURS,
 ) -> ImportResult:
     """Baca isi file export di memori (halaman upload), validasi, hitung ratio/zone.
@@ -275,9 +273,9 @@ def load_measurements_from_bytes(
 
 
 def load_measurements(
-    path: Union[str, Path],
+    path: str | Path,
     mapping: ExportMapping = DEFAULT_MAPPING,
-    source_batch: Optional[str] = None,
+    source_batch: str | None = None,
     source_utc_offset_hours: int = DEFAULT_SOURCE_UTC_OFFSET_HOURS,
 ) -> ImportResult:
     path = Path(path)

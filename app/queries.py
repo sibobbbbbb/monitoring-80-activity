@@ -8,7 +8,6 @@ Item cek = kombinasi (part, operation, characteristics); satu item cek bisa dike
 """
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 import pandas as pd
 from sqlalchemy import text
@@ -92,12 +91,12 @@ def _scope_params(f: Filters) -> dict:
     }
 
 
-def last_ingested_at(engine: Engine) -> Optional[datetime]:
+def last_ingested_at(engine: Engine) -> datetime | None:
     with engine.connect() as conn:
         return conn.execute(text("SELECT MAX(ingested_at) FROM measurements")).scalar_one()
 
 
-def time_bounds(engine: Engine) -> tuple[Optional[datetime], Optional[datetime]]:
+def time_bounds(engine: Engine) -> tuple[datetime | None, datetime | None]:
     with engine.connect() as conn:
         row = conn.execute(text("SELECT MIN(measured_at), MAX(measured_at) FROM measurements")).one()
     return row[0], row[1]

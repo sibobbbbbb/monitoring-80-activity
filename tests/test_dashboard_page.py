@@ -4,7 +4,7 @@ dengan data dummy yang masuk lewat db/ingestion.py.
 Catatan: jangan meng-import app.dashboard dari test; itu skrip Streamlit yang langsung berjalan saat di-import.
 """
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,7 +18,7 @@ from scripts.generate_dummy_data import build_dummy_frame
 from tests.test_ingestion import frame, row
 
 PAGE = Path(__file__).resolve().parent.parent / "app" / "dashboard.py"
-END = datetime(2026, 9, 28, tzinfo=timezone.utc)
+END = datetime(2026, 9, 28, tzinfo=UTC)
 SEVERITY = {"NG": 2, "WARNING": 1, "OK": 0}
 BADGE = re.compile(r"-badge\[(NG|WARNING|OK) · (\d+)%\]")
 
@@ -52,7 +52,7 @@ def metrics(at):
 
 
 def refresh_button(at):
-    return [b for b in at.button if b.label == "Refresh Sekarang"][0]
+    return next(b for b in at.button if b.label == "Refresh Sekarang")
 
 
 def test_renders_one_chart_per_item_cek_without_errors(dash):
@@ -128,7 +128,7 @@ def test_default_range_is_all_data(dash):
     assert not at.date_input                          # pemilih tanggal hanya muncul pada mode Kustom
 
 
-@pytest.mark.parametrize("preset, first_day", [
+@pytest.mark.parametrize(("preset", "first_day"), [
     ("7 hari", "22 Sep 2026"), ("14 hari", "15 Sep 2026"), ("30 hari", "30 Aug 2026"), ("90 hari", "01 Jul 2026"),
 ])
 def test_quick_ranges_count_back_from_the_latest_data_day(dash, preset, first_day):

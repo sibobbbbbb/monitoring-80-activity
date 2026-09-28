@@ -4,16 +4,15 @@ Modul ini murni (tanpa dependensi DB atau UI) dan memakai Decimal, bukan float.
 """
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum
-from typing import Optional, Union
+from enum import StrEnum
 
-Number = Union[Decimal, int, float, str]
+type Number = Decimal | int | float | str
 
 WARNING_THRESHOLD = Decimal("0.8")
 NG_THRESHOLD = Decimal("1.0")
 
 
-class Zone(str, Enum):
+class Zone(StrEnum):
     OK = "OK"
     WARNING = "WARNING"
     NG = "NG"
@@ -22,7 +21,7 @@ class Zone(str, Enum):
 
 @dataclass(frozen=True)
 class RatioResult:
-    ratio: Optional[Decimal]  # None jika zone == NO_STANDARD
+    ratio: Decimal | None  # None jika zone == NO_STANDARD
     zone: Zone
 
 
@@ -43,9 +42,9 @@ def classify(ratio: Decimal) -> Zone:
 
 def compute_ratio(
     value: Number,
-    nominal: Optional[Number],
-    usl: Optional[Number],
-    lsl: Optional[Number],
+    nominal: Number | None,
+    usl: Number | None,
+    lsl: Number | None,
 ) -> RatioResult:
     """Hitung rasio (x - ref) / (batas - ref) dan zona.
 

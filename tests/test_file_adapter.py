@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -8,10 +8,22 @@ import pytest
 
 from adapters.column_mapping import ExportMapping
 from adapters.file_adapter import (
-    InvalidFileError, MissingColumnsError, load_measurements, load_measurements_from_bytes,
+    InvalidFileError,
+    MissingColumnsError,
+    load_measurements,
+    load_measurements_from_bytes,
 )
 from tests.fexqms_fixture import (
-    CHARACTERISTICS, FIRST_DATA_ROW, MACHINE, OPERATION, PART, T0, export_grid, times, to_csv, to_xlsx,
+    CHARACTERISTICS,
+    FIRST_DATA_ROW,
+    MACHINE,
+    OPERATION,
+    PART,
+    T0,
+    export_grid,
+    times,
+    to_csv,
+    to_xlsx,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,7 +36,7 @@ EXPECTED_ZONES = ["OK", "OK", "OK", "WARNING", "WARNING", "NG", "OK", "OK"]
 
 
 def samples(values):
-    return list(zip(times(len(values)), values))
+    return list(zip(times(len(values)), values, strict=True))
 
 
 def load_csv(grid, name="in.csv", **kw):
@@ -58,11 +70,11 @@ class TestValidFile:
 
     def test_time_converted_wib_to_utc(self):
         d = load_measurements(SAMPLE).data
-        assert d.iloc[0]["measured_at"] == pd.Timestamp(datetime(2026, 1, 5, 1, 0, 0, tzinfo=timezone.utc))
+        assert d.iloc[0]["measured_at"] == pd.Timestamp(datetime(2026, 1, 5, 1, 0, 0, tzinfo=UTC))
 
     def test_time_offset_is_configurable(self):
         res = load_csv(export_grid(samples([0.05])), source_utc_offset_hours=0)
-        assert res.data.iloc[0]["measured_at"] == pd.Timestamp(datetime(2026, 1, 5, 8, 0, 0, tzinfo=timezone.utc))
+        assert res.data.iloc[0]["measured_at"] == pd.Timestamp(datetime(2026, 1, 5, 8, 0, 0, tzinfo=UTC))
 
     def test_xlsx_gives_same_result_as_csv(self):
         grid = export_grid(samples(XCHARTS))

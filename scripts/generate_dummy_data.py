@@ -11,9 +11,8 @@ import argparse
 import random
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Optional
 
 import pandas as pd
 
@@ -38,12 +37,12 @@ class ItemSpec:
     part: str
     operation: str
     characteristics: str
-    usl: Optional[Decimal]
-    lsl: Optional[Decimal]
-    nominal: Optional[Decimal]
+    usl: Decimal | None
+    lsl: Decimal | None
+    nominal: Decimal | None
     machines: tuple[MachineSeries, ...]
     decimals: int = 3
-    info_base: Optional[float] = None   # hanya item tanpa standar: nilai dasar
+    info_base: float | None = None   # hanya item tanpa standar: nilai dasar
 
 
 def _m(machine, mu_start, mu_end=None, sigma=0.12) -> MachineSeries:
@@ -53,7 +52,7 @@ def _m(machine, mu_start, mu_end=None, sigma=0.12) -> MachineSeries:
 CH, CS, CR = ("Demo Cyl.Head", "Op 140-180"), ("Demo Crankshaft", "Op 20 Grinding"), ("Demo Conrod", "Op 30 Honing")
 
 CATALOG: tuple[ItemSpec, ...] = (
-    # ---- Demo Cyl.Head / Op 140-180 : satu sisi tanpa nominal (LSL=0, ref=0) dan dua sisi ----
+    # Demo Cyl.Head / Op 140-180 : satu sisi tanpa nominal (LSL=0, ref=0) dan dua sisi
     ItemSpec(*CH, "True Pos Hole 1", D("0.2"), D("0"), None,
              (_m("CH-A", 0.35, 1.15, 0.07), _m("CH-B", 0.62, 0.86, 0.09), _m("CH-C", 0.25, sigma=0.10))),
     ItemSpec(*CH, "True Pos Hole 2", D("0.2"), D("0"), None,
@@ -62,7 +61,7 @@ CATALOG: tuple[ItemSpec, ...] = (
              (_m("CH-A", 0.60, sigma=0.15),)),
     ItemSpec(*CH, "Bore Dia", D("30.025"), D("29.975"), D("30.000"),
              (_m("CH-A", 0.0, sigma=0.35), _m("CH-B", -0.30, -1.10, 0.08)), decimals=4),
-    # ---- Demo Crankshaft / Op 20 Grinding : dua sisi simetris, asimetris, satu sisi dengan nominal ----
+    # Demo Crankshaft / Op 20 Grinding : dua sisi simetris, asimetris, satu sisi dengan nominal
     ItemSpec(*CS, "Journal Dia 1", D("52.010"), D("51.990"), D("52.000"),
              (_m("GR-1", 0.10, sigma=0.30), _m("GR-2", 0.70, sigma=0.15)), decimals=4),
     ItemSpec(*CS, "Journal Dia 2", D("52.010"), D("51.995"), D("52.000"),
@@ -72,7 +71,7 @@ CATALOG: tuple[ItemSpec, ...] = (
              decimals=4),
     ItemSpec(*CS, "Coolant Temp (info)", None, None, None,
              (_m("GR-1", 0.0), _m("GR-2", 0.0)), info_base=24.0),
-    # ---- Demo Conrod / Op 30 Honing : dua sisi, satu sisi bawah dengan nominal, satu sisi tanpa nominal ----
+    # Demo Conrod / Op 30 Honing : dua sisi, satu sisi bawah dengan nominal, satu sisi tanpa nominal
     ItemSpec(*CR, "Big End Bore", D("55.015"), D("54.985"), D("55.000"),
              (_m("HN-1", 0.0, sigma=0.40), _m("HN-2", 0.40, 0.90, 0.10)), decimals=4),
     ItemSpec(*CR, "Small End Bore", None, D("19.990"), D("20.000"),
@@ -127,7 +126,7 @@ def _series_rows(spec: ItemSpec, ms: MachineSeries, end: datetime, weeks: int, p
 
 def build_dummy_frame(end: datetime, weeks: int = 4, per_day: int = 3, seed: int = 42) -> pd.DataFrame:
     """DataFrame siap upsert (kolom sama dengan output adapters.file_adapter)."""
-    end = end if end.tzinfo else end.replace(tzinfo=timezone.utc)
+    end = end if end.tzinfo else end.replace(tzinfo=UTC)
     rows = [r for spec in CATALOG for ms in spec.machines
             for r in _series_rows(spec, ms, end, weeks, per_day, seed)]
     df = pd.DataFrame(rows)
@@ -148,11 +147,12 @@ def main(argv=None) -> int:
     p.add_argument("--per-day", type=int, default=3, help="sampel per hari per mesin")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--end", help="akhir rentang (ISO, UTC); default: jam penuh terakhir")
-    p.add_argument("--reset", action="store_true", help="hapus dulu data dummy sebelumnya (source_batch dummy-generator)")
+    p.add_argument("--reset", action="store_true",
+                   help="hapus dulu data dummy sebelumnya (source_batch dummy-generator)")
     args = p.parse_args(argv)
 
-    end = (datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc) if args.end
-           else datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0))
+    end = (datetime.fromisoformat(args.end).replace(tzinfo=UTC) if args.end
+           else datetime.now(UTC).replace(minute=0, second=0, microsecond=0))
     df = build_dummy_frame(end, args.weeks, args.per_day, args.seed)
 
     engine = get_engine()

@@ -1,10 +1,17 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pandas as pd
 
 from app.charts import (
-    FLAG_SIZE, LAST_SIZE, MACHINE_PALETTE, MARKER_SIZE, ZONE_COLORS, item_chart, limits_of, machine_colors,
+    FLAG_SIZE,
+    LAST_SIZE,
+    MACHINE_PALETTE,
+    MARKER_SIZE,
+    ZONE_COLORS,
+    item_chart,
+    limits_of,
+    machine_colors,
 )
 from app.summary import summarize_zones
 from app.timeutil import day_range_utc, format_wib
@@ -31,15 +38,15 @@ class TestSummary:
 class TestTime:
     def test_day_range_is_wib_midnight_in_utc(self):
         lo, hi = day_range_utc(date(2026, 1, 5), date(2026, 1, 5))
-        assert lo == datetime(2026, 1, 4, 17, 0, tzinfo=timezone.utc)
-        assert hi == datetime(2026, 1, 5, 17, 0, tzinfo=timezone.utc)
+        assert lo == datetime(2026, 1, 4, 17, 0, tzinfo=UTC)
+        assert hi == datetime(2026, 1, 5, 17, 0, tzinfo=UTC)
 
     def test_multi_day_range_inclusive_end(self):
         lo, hi = day_range_utc(date(2026, 1, 5), date(2026, 1, 7))
         assert (hi - lo).days == 3
 
     def test_format_wib(self):
-        assert format_wib(datetime(2026, 1, 5, 1, 0, tzinfo=timezone.utc)) == "2026-01-05 08:00:00 WIB"
+        assert format_wib(datetime(2026, 1, 5, 1, 0, tzinfo=UTC)) == "2026-01-05 08:00:00 WIB"
 
 
 class TestLimits:
@@ -150,7 +157,7 @@ class TestItemChart:
         assert lo < 0.0 and hi > 0.2                                              # LSL=0 dan USL=0.2 terlihat
 
     def test_y_range_grows_to_include_data_beyond_limit(self):
-        lo, hi = item_chart(rows("M1", [0.05, 0.31]), self.colors).layout.yaxis.range
+        _, hi = item_chart(rows("M1", [0.05, 0.31]), self.colors).layout.yaxis.range
         assert hi > 0.31
 
     def test_time_axis_is_wib(self):

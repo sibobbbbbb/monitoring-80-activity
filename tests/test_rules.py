@@ -135,13 +135,13 @@ class TestFloatingPoint:
 
 class TestInvalidSpec:
     def test_usl_not_above_ref(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="usl"):
             compute_ratio("5", "5", "5", None)
 
     def test_usl_below_ref(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="usl"):
             compute_ratio("6", "5", "4", None)
 
     def test_lsl_not_below_ref(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="lsl"):
             compute_ratio("4", "5", None, "5")

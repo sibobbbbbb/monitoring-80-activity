@@ -21,7 +21,6 @@ class ExportMapping:
         "lsl": "LSL:",
         "nominal": "Nominal:",   # tidak ada di export FEXQMS saat ini; dipakai bila muncul
     })
-    # field internal -> judul kolom di tabel data
     table_columns: dict[str, str] = field(default_factory=lambda: {
         "measured_at": "Sample Date Time",
         "value": "XChart",       # nilai yang dibandingkan ke USL/LSL di FEXQMS (BUKAN "Mea. Data : 1")
@@ -31,7 +30,6 @@ class ExportMapping:
     })
     # wajib ada di header (identitas item cek)
     required_header: tuple[str, ...] = ("part", "operation", "machine", "characteristics")
-    # wajib ada sebagai kolom tabel
     required_table: tuple[str, ...] = ("measured_at", "value")
     # kolom tabel opsional; bila ada dan terisi, nilainya mengalahkan header untuk baris itu
     per_row_identity: tuple[str, ...] = ("part", "machine", "characteristics")

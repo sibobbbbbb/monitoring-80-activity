@@ -1,5 +1,5 @@
 """Halaman upload manual CSV/XLSX: parse, preview, konfirmasi, lalu upsert ke Postgres."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 import streamlit as st
@@ -62,7 +62,7 @@ if uploaded is None:
 file_id = getattr(uploaded, "file_id", None) or uploaded.name
 state = st.session_state.get(STATE_KEY)
 if state is None or state["file_id"] != file_id:
-    batch = f"{uploaded.name}#{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
+    batch = f"{uploaded.name}#{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
     try:
         result = load_measurements_from_bytes(uploaded.getvalue(), uploaded.name, source_batch=batch)
     except ValueError as exc:  # kolom wajib hilang, format tidak didukung, CSV rusak/kosong
@@ -77,7 +77,6 @@ if state is None or state["file_id"] != file_id:
 
 data, failures, duplicates = state["result"]
 
-# ---- preview --------------------------------------------------------------------------------
 st.subheader(f"Preview: {uploaded.name}")
 c1, c2, c3 = st.columns(3)
 c1.metric("Baris sukses", f"{len(data):,}")
@@ -96,7 +95,8 @@ if failures:
 
 if duplicates:
     st.subheader("Baris duplikat")
-    st.caption("Kunci (part, operation, mesin, characteristics, waktu) sama dalam satu file: baris terakhir yang dipakai.")
+    st.caption("Kunci (part, operation, mesin, characteristics, waktu) sama dalam satu file: "
+               "baris terakhir yang dipakai.")
     st.dataframe(pd.DataFrame([{"Baris ditimpa": w.row_number, "Ditimpa oleh baris": w.overwritten_by,
                                 "Keterangan": w.reason} for w in duplicates]),
                  hide_index=True, key="duplicates_table")
@@ -105,7 +105,6 @@ if len(data):
     st.subheader(f"Data yang akan diunggah (maks {PREVIEW_ROWS} baris pertama)")
     st.dataframe(_preview_table(data), hide_index=True, key="preview_table")
 
-# ---- konfirmasi dan hasil ---------------------------------------------------------------------
 st.divider()
 if state["upsert"] is None:
     if state["error"]:

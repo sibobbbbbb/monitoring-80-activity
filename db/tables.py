@@ -1,7 +1,16 @@
 """Definisi tabel SQLAlchemy Core. Harus sejajar dengan db/schema.sql."""
 from sqlalchemy import (
-    BigInteger, CheckConstraint, Column, DateTime, Integer, MetaData, Numeric,
-    Table, Text, UniqueConstraint, func,
+    BigInteger,
+    CheckConstraint,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    Numeric,
+    Table,
+    Text,
+    UniqueConstraint,
+    func,
 )
 
 metadata = MetaData()

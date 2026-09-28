@@ -8,9 +8,9 @@ Keterbacaan: garis tren tipis dan lembut; titik WARNING/NG diberi warna isi zona
 menumpuk bila banyak titik ditandai); titik terakhir tiap mesin ditonjolkan karena itulah yang menentukan
 status; zona WARNING dan NG diberi latar tipis sehingga posisi terhadap batas terbaca sekilas.
 """
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable, Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -41,19 +41,23 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
 
 
-def _num(v) -> Optional[Decimal]:
+def _num(v) -> Decimal | None:
     return None if v is None or (not isinstance(v, (str, Decimal)) and pd.isna(v)) else Decimal(str(v))
 
 
 @dataclass(frozen=True)
 class Limits:
-    usl: Optional[float]
-    lsl: Optional[float]
-    uwl: Optional[float]   # batas warning atas: ref + 80% * (usl - ref)
-    lwl: Optional[float]   # batas warning bawah: ref - 80% * (ref - lsl)
+    usl: float | None
+    lsl: float | None
+    uwl: float | None   # batas warning atas: ref + 80% * (usl - ref)
+    lwl: float | None   # batas warning bawah: ref - 80% * (ref - lsl)
 
     def values(self) -> list[float]:
         return [v for v in (self.usl, self.lsl, self.uwl, self.lwl) if v is not None]
+
+
+def _float(v: Decimal | None) -> float | None:
+    return None if v is None else float(v)
 
 
 def limits_of(nominal, usl, lsl) -> Limits:
@@ -61,8 +65,7 @@ def limits_of(nominal, usl, lsl) -> Limits:
     ref, hi, lo = _num(nominal) or Decimal(0), _num(usl), _num(lsl)
     uwl = ref + WARNING_THRESHOLD * (hi - ref) if hi is not None and hi > ref else None
     lwl = ref - WARNING_THRESHOLD * (ref - lo) if lo is not None and lo < ref else None
-    f = lambda v: None if v is None else float(v)  # noqa: E731
-    return Limits(f(hi), f(lo), f(uwl), f(lwl))
+    return Limits(_float(hi), _float(lo), _float(uwl), _float(lwl))
 
 
 def _draw(fig: go.Figure, lim: Limits, color_limit: str, color_warn: str, width: float, label: bool) -> None:
@@ -93,7 +96,7 @@ def _bands(fig: go.Figure, lim: Limits, bottom: float, top: float) -> None:
 def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 300) -> go.Figure:
     """rows: deret satu item cek (semua mesin) dari app.queries.series_rows."""
     d = rows.copy()
-    d["x"] = d["measured_at"].dt.tz_convert(WIB).dt.tz_localize(None)   # sumbu waktu dalam WIB
+    d["x"] = d["measured_at"].dt.tz_convert(WIB).dt.tz_localize(None)
     d["y"] = d["value"].astype(float)
     d["r"] = d["ratio"].astype(float)
     d = d.sort_values("x")
@@ -104,22 +107,24 @@ def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 300) ->
     for m in machines:
         g = d[d["machine"] == m]
         base = colors.get(m, MACHINE_PALETTE[0])
-        last = [False] * (len(g) - 1) + [True]
-        flagged = [z != "OK" for z in g["zone"]]
+        is_last = [False] * (len(g) - 1) + [True]
+        is_flagged = [z != "OK" for z in g["zone"]]
         fig.add_trace(go.Scatter(
             x=g["x"], y=g["y"], mode="lines+markers", name=m, showlegend=False, legendgroup=m,
             line=dict(color=_rgba(base, LINE_ALPHA), width=LINE_WIDTH),
             marker=dict(
                 color=[ZONE_COLORS[z] if z != "OK" else base for z in g["zone"]],
-                size=[LAST_SIZE if l else FLAG_SIZE if f else MARKER_SIZE for f, l in zip(flagged, last)],
-                line=dict(color=["rgba(255,255,255,0.95)" if l else "rgba(0,0,0,0.35)" for l in last],
-                          width=[2 if l else 0.6 for l in last]),
+                size=[LAST_SIZE if last else FLAG_SIZE if flagged else MARKER_SIZE
+                      for flagged, last in zip(is_flagged, is_last, strict=True)],
+                line=dict(color=["rgba(255,255,255,0.95)" if last else "rgba(0,0,0,0.35)" for last in is_last],
+                          width=[2 if last else 0.6 for last in is_last]),
             ),
             customdata=g["r"],
             hovertemplate=f"{m}<br>%{{x|%d %b %H:%M}}<br>XChart: %{{y}}<br>Rasio: %{{customdata:.1%}}<extra></extra>",
         ))
-        if multi:   # warna titik berubah per zona, jadi legenda memakai trace khusus berwarna mesin
-            # legendgroup sama dengan trace data: klik nama mesin di legenda menyembunyikan/menampilkan garisnya
+        if multi:
+            # Titik berwarna zona, jadi legenda butuh trace sendiri; legendgroup yang sama membuat kliknya ikut
+            # menyembunyikan garis data.
             fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=m, showlegend=True, legendgroup=m,
                                      line=dict(color=base, width=3)))
 

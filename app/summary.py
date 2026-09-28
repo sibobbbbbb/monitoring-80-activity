@@ -1,6 +1,6 @@
 """Ringkasan zona untuk kartu dashboard. NO_STANDARD dikecualikan dari total dan persen."""
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 STANDARD_ZONES = ("OK", "WARNING", "NG")
 

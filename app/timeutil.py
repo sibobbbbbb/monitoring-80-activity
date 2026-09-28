@@ -1,5 +1,5 @@
 """Waktu disimpan UTC di database; dashboard menampilkan dan memfilter dalam WIB (UTC+7)."""
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 WIB = timezone(timedelta(hours=7))
 
@@ -12,4 +12,4 @@ def day_range_utc(start: date, end: date) -> tuple[datetime, datetime]:
     """Rentang tanggal WIB inklusif [start, end] -> [start 00:00 WIB, end+1 00:00 WIB) dalam UTC."""
     lo = datetime.combine(start, time.min, tzinfo=WIB)
     hi = datetime.combine(end + timedelta(days=1), time.min, tzinfo=WIB)
-    return lo.astimezone(timezone.utc), hi.astimezone(timezone.utc)
+    return lo.astimezone(UTC), hi.astimezone(UTC)

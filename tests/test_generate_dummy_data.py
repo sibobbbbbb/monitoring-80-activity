@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -9,7 +9,7 @@ from core.rules import classify, compute_ratio
 from db.tables import measurements
 from scripts.generate_dummy_data import DUMMY_BATCH, build_dummy_frame, main
 
-END = datetime(2026, 9, 28, tzinfo=timezone.utc)
+END = datetime(2026, 9, 28, tzinfo=UTC)
 ITEM = ["part", "operation", "characteristics"]
 
 
@@ -21,7 +21,7 @@ def frame():
 def latest_item_zones(df):
     """Zona dari rasio terburuk di antara pengukuran terakhir tiap mesin, per item cek (tanpa NO_STANDARD)."""
     std = df[df["zone"] != "NO_STANDARD"]
-    last = std.sort_values("measured_at").groupby(ITEM + ["machine"]).tail(1)
+    last = std.sort_values("measured_at").groupby([*ITEM, "machine"]).tail(1)
     return last.groupby(ITEM)["ratio"].max().map(classify)
 
 
@@ -42,7 +42,7 @@ class TestStructure:
 
     def test_time_span_and_density_make_a_visible_trend(self, frame):
         assert (frame["measured_at"].max() - frame["measured_at"].min()).days >= 26
-        per_series = frame.groupby(ITEM + ["machine"]).size()
+        per_series = frame.groupby([*ITEM, "machine"]).size()
         assert per_series.min() >= 60
         assert frame["measured_at"].max() <= pd.Timestamp(END)
 

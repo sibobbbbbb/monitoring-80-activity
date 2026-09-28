@@ -11,7 +11,13 @@ import streamlit as st
 
 from app.charts import item_chart, machine_colors
 from app.queries import (
-    Filters, filter_options, item_summary, last_ingested_at, no_standard_item_count, series_rows, time_bounds,
+    Filters,
+    filter_options,
+    item_summary,
+    last_ingested_at,
+    no_standard_item_count,
+    series_rows,
+    time_bounds,
 )
 from app.summary import summarize_zones
 from app.timeutil import WIB, day_range_utc, format_wib
@@ -59,7 +65,6 @@ def load_series(f: Filters, items: tuple):
     return series_rows(get_engine(), f, list(items))
 
 
-# ---- header: judul, data terakhir, tombol refresh -------------------------------------------
 title_col, last_col, refresh_col = st.columns([5, 3, 2], vertical_alignment="center")
 title_col.title("Monitoring 80% Activity")
 
@@ -77,11 +82,11 @@ if refresh_col.button("Refresh Sekarang", type="primary", width="stretch"):
     st.rerun()
 
 if bounds[0] is None:
-    st.info("Belum ada data pengukuran. Data dummy: `docker compose run --rm app python -m scripts.generate_dummy_data`. "
+    st.info("Belum ada data pengukuran. Data dummy: "
+            "`docker compose run --rm app python -m scripts.generate_dummy_data`. "
             "Fallback: unggah export FEXQMS lewat halaman **Upload Data** di sidebar.")
     st.stop()
 
-# ---- filter ---------------------------------------------------------------------------------
 options = load_options()
 options["jenis"] = options["part"] + " · " + options["operation"]
 min_day, max_day = bounds[0].astimezone(WIB).date(), bounds[1].astimezone(WIB).date()
@@ -126,7 +131,6 @@ start, end = day_range_utc(picked[0], picked[1])
 jenis_pairs = tuple(sorted({(r.part, r.operation) for r in options[options["jenis"].isin(jenis_sel)].itertuples()}))
 f = Filters(start=start, end=end, jenis=jenis_pairs, characteristics=tuple(chars_sel), machines=tuple(machines_sel))
 
-# ---- ringkasan per item cek ---------------------------------------------------------------------
 summary = load_item_summary(f)
 if summary.empty:
     st.info("Tidak ada item cek ber-standar untuk filter ini.")
@@ -141,7 +145,7 @@ summary = summary.sort_values(["sort_ratio", "part", "operation", "characteristi
 counts = summarize_zones(Counter(summary["zone"]))
 cards = st.columns(4)
 cards[0].metric("Item cek", f"{counts.total:,}")
-for col, zone in zip(cards[1:], ("NG", "WARNING", "OK")):
+for col, zone in zip(cards[1:], ("NG", "WARNING", "OK"), strict=True):
     col.metric(zone, f"{counts.counts[zone]:,}")
     col.caption(f"{counts.percents[zone]:.1f}% dari item cek")
 skipped = load_no_standard_items(f)
@@ -151,7 +155,6 @@ if skipped:
 else:
     st.caption(f"Status memakai {basis.lower()}; waktu dalam WIB.")
 
-# ---- grid chart ----------------------------------------------------------------------------------
 pages = ceil(len(summary) / page_size)
 page = 1
 if pages > 1:
@@ -166,7 +169,7 @@ colors = machine_colors(options["machine"])
 
 width = min(n_cols, len(shown))     # sedikit item -> kartu memakai lebar penuh, bukan separuh kosong
 for i in range(0, len(shown), width):
-    for cell, item in zip(st.columns(width), list(shown.iloc[i:i + width].itertuples())):
+    for cell, item in zip(st.columns(width), list(shown.iloc[i:i + width].itertuples()), strict=False):
         rows = series[(series["part"] == item.part) & (series["operation"] == item.operation)
                       & (series["characteristics"] == item.characteristics)]
         with cell, st.container(border=True):

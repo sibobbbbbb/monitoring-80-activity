@@ -117,7 +117,7 @@ def test_valid_export_preview_then_confirm_upserts(page):
 
 
 def test_xlsx_export_with_summary_sheet_is_accepted(page):
-    grid = export_grid(list(zip(times(3), [0.05, 0.09, 0.12])))
+    grid = export_grid(list(zip(times(3), [0.05, 0.09, 0.12], strict=True)))
     at = click_confirm(page.open(to_xlsx(grid), "CONTROL_CHART.xlsx"))
     assert not at.exception
     assert metrics(at)["Baris baru masuk"] == "3" and len(db_rows(page.engine)) == 3

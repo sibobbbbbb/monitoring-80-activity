@@ -3,7 +3,7 @@
 Sama seperti test_ingestion.py (SQLite), tetapi assertion Decimal dibandingkan persis,
 bukan approx, dan sintaks ON CONFLICT diverifikasi lewat SQL yang benar-benar dikirim ke Postgres.
 """
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -76,15 +76,15 @@ def test_same_file_twice_is_idempotent(pg_engine):
 
 def test_reupload_updates_changed_value_exact(pg_engine):
     upsert_measurements(pg_engine, frame(row("C1", value="10.2", ratio="0.4", zone="OK", batch="b1")),
-                        ingested_at=datetime(2026, 1, 5, tzinfo=timezone.utc))
+                        ingested_at=datetime(2026, 1, 5, tzinfo=UTC))
     upsert_measurements(pg_engine, frame(row("C1", value="10.45", ratio="0.9", zone="WARNING", batch="b2")),
-                        ingested_at=datetime(2026, 1, 6, tzinfo=timezone.utc))
+                        ingested_at=datetime(2026, 1, 6, tzinfo=UTC))
     rows = all_rows(pg_engine)
     assert len(rows) == 1
     r = rows[0]
     assert r["value"] == D("10.45") and r["ratio"] == D("0.9")
     assert r["zone"] == "WARNING" and r["source_batch"] == "b2"
-    assert r["ingested_at"] == datetime(2026, 1, 6, tzinfo=timezone.utc)
+    assert r["ingested_at"] == datetime(2026, 1, 6, tzinfo=UTC)
 
 
 def test_update_keeps_row_id(pg_engine):
@@ -172,15 +172,13 @@ def _record(**over):
 def test_db_enforces_unique_key_without_upsert(pg_engine):
     with pg_engine.begin() as c:
         c.execute(measurements.insert().values(**_record()))
-    with pytest.raises(IntegrityError):
-        with pg_engine.begin() as c:
-            c.execute(measurements.insert().values(**_record()))
+    with pytest.raises(IntegrityError), pg_engine.begin() as c:
+        c.execute(measurements.insert().values(**_record()))
 
 
 def test_db_rejects_invalid_zone(pg_engine):
-    with pytest.raises(IntegrityError):
-        with pg_engine.begin() as c:
-            c.execute(measurements.insert().values(**_record(zone="BOGUS")))
+    with pytest.raises(IntegrityError), pg_engine.begin() as c:
+        c.execute(measurements.insert().values(**_record(zone="BOGUS")))
 
 
 def test_failed_upsert_rolls_back_whole_batch(pg_engine):
@@ -196,9 +194,8 @@ def test_raw_multirow_upsert_with_duplicate_keys_is_rejected_by_postgres(pg_engi
     stmt = pg_insert(measurements).values([_record(value=D("1")), _record(value=D("2"))])
     stmt = stmt.on_conflict_do_update(index_elements=list(MEASUREMENT_KEY),
                                       set_={"value": stmt.excluded.value})
-    with pytest.raises(DBAPIError):
-        with pg_engine.begin() as c:
-            c.execute(stmt)
+    with pytest.raises(DBAPIError), pg_engine.begin() as c:
+        c.execute(stmt)
 
 
 def test_spec_master_key_is_enforced(pg_engine):
@@ -206,6 +203,5 @@ def test_spec_master_key_is_enforced(pg_engine):
                usl=D("0.2"), lsl=D("0"), berlaku_sejak=T0.to_pydatetime())
     with pg_engine.begin() as c:
         c.execute(spec_master.insert().values(**rec))
-    with pytest.raises(IntegrityError):
-        with pg_engine.begin() as c:
-            c.execute(spec_master.insert().values(**rec))
+    with pytest.raises(IntegrityError), pg_engine.begin() as c:
+        c.execute(spec_master.insert().values(**rec))

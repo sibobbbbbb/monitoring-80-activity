@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pandas as pd
@@ -11,8 +11,8 @@ from db.tables import measurements, metadata
 # SQLite menyimpan Numeric sebagai float; di Postgres tetap Decimal.
 pytestmark = pytest.mark.filterwarnings("ignore:Dialect sqlite.*Decimal")
 
-T0 = pd.Timestamp(datetime(2026, 1, 5, 1, 0, tzinfo=timezone.utc))
-T1 = pd.Timestamp(datetime(2026, 1, 5, 1, 1, tzinfo=timezone.utc))
+T0 = pd.Timestamp(datetime(2026, 1, 5, 1, 0, tzinfo=UTC))
+T1 = pd.Timestamp(datetime(2026, 1, 5, 1, 1, tzinfo=UTC))
 
 COLUMNS = ["part", "operation", "machine", "characteristics", "measured_at", "value",
            "nominal", "usl", "lsl", "ratio", "zone", "source_batch"]
@@ -69,9 +69,9 @@ def test_same_file_twice_is_idempotent(engine):
 
 def test_reupload_updates_changed_value(engine):
     upsert_measurements(engine, frame(row("C1", value="10.2", ratio="0.4", zone="OK", batch="b1")),
-                        ingested_at=datetime(2026, 1, 5, tzinfo=timezone.utc))
+                        ingested_at=datetime(2026, 1, 5, tzinfo=UTC))
     upsert_measurements(engine, frame(row("C1", value="10.45", ratio="0.9", zone="WARNING", batch="b2")),
-                        ingested_at=datetime(2026, 1, 6, tzinfo=timezone.utc))
+                        ingested_at=datetime(2026, 1, 6, tzinfo=UTC))
     rows = all_rows(engine)
     assert len(rows) == 1
     r = rows[0]

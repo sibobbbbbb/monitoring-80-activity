@@ -1,7 +1,7 @@
 """Ingestion: upsert hasil adapter ke tabel measurements (idempoten)."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 import pandas as pd
 from sqlalchemy import select, tuple_
@@ -27,7 +27,7 @@ class UpsertResult(NamedTuple):
 
 
 def _utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)  # SQLite membuang tz
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)  # SQLite membuang tz
 
 
 def _num_equal(a, b) -> bool:
@@ -44,7 +44,7 @@ def _classify(conn: Connection, records: list[dict]) -> UpsertResult:
 
     def _key(values: tuple) -> tuple:
         # elemen terakhir kunci = measured_at; SQLite membuang tz, jadi samakan ke UTC
-        return tuple(values[:-1]) + (_utc(values[-1]),)
+        return (*values[:-1], _utc(values[-1]))
 
     existing: dict[tuple, tuple] = {}
     for i in range(0, len(records), CHUNK_SIZE):
@@ -58,7 +58,7 @@ def _classify(conn: Connection, records: list[dict]) -> UpsertResult:
         old = existing.get(_key(tuple(r[k] for k in MEASUREMENT_KEY)))
         if old is None:
             inserted += 1
-        elif all(_num_equal(o, r[c]) for o, c in zip(old, _COMPARE_COLUMNS)):
+        elif all(_num_equal(o, r[c]) for o, c in zip(old, _COMPARE_COLUMNS, strict=True)):
             unchanged += 1
         else:
             updated += 1
@@ -94,7 +94,7 @@ def _to_records(df: pd.DataFrame, ingested_at: datetime) -> list[dict]:
 def upsert_measurements(
     engine: Engine,
     df: pd.DataFrame,
-    ingested_at: Optional[datetime] = None,
+    ingested_at: datetime | None = None,
 ) -> UpsertResult:
     """Upsert baris ke measurements, kunci unik (machine_id, unit_id, item_ukur, measured_at).
 
@@ -105,7 +105,7 @@ def upsert_measurements(
     if df.empty:
         return UpsertResult(0, 0, 0)
 
-    records = _to_records(df, ingested_at or datetime.now(timezone.utc))
+    records = _to_records(df, ingested_at or datetime.now(UTC))
     insert = _insert_for(engine)
 
     with engine.begin() as conn:
