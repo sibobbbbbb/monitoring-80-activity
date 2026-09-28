@@ -3,5 +3,7 @@ pandas==3.0.6
 plotly==7.1.0
 SQLAlchemy==2.1.1
 psycopg2-binary==2.9.13
-pytest==9.1.1
 openpyxl==3.1.5
+# alat pengembangan (test dan lint dijalankan di image yang sama)
+pytest==9.1.1
+ruff==0.14.0
