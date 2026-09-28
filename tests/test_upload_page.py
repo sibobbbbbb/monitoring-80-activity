@@ -4,6 +4,7 @@ st.file_uploader diganti file palsu; get_engine diarahkan ke schema tes sementar
 File yang diunggah berformat export FEXQMS (header + tabel, nilai dari XChart).
 """
 import io
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,8 @@ import streamlit as st
 from sqlalchemy import select
 from streamlit.testing.v1 import AppTest
 
+from app.queries import Filters, item_summary
+from app.timeutil import day_range_utc
 from db.tables import measurements
 from tests.fexqms_fixture import FIRST_DATA_ROW, MACHINE, T0, export_grid, times, to_csv, to_xlsx
 
@@ -105,6 +108,12 @@ def test_valid_export_preview_then_confirm_upserts(page):
     assert (rows[0]["part"], rows[0]["operation"], rows[0]["machine"]) == ("Demo Part", "Demo Op 10", MACHINE)
     assert rows[3]["value"] == Decimal("0.16") and rows[3]["ratio"] == Decimal("0.8")
     assert rows[3]["usl"] == Decimal("0.2") and rows[3]["lsl"] == Decimal("0")
+
+    # dashboard membaca data yang sama: satu item cek, rasio terakhir 0.5, tertinggi 1.05
+    start, end = day_range_utc(date(2026, 1, 5), date(2026, 1, 5))
+    summary = item_summary(page.engine, Filters(start=start, end=end))
+    assert len(summary) == 1
+    assert summary.iloc[0]["latest_ratio"] == Decimal("0.5") and summary.iloc[0]["max_ratio"] == Decimal("1.05")
 
 
 def test_xlsx_export_with_summary_sheet_is_accepted(page):

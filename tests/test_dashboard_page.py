@@ -1,0 +1,174 @@
+"""Test halaman dashboard (app/dashboard.py) lewat streamlit.testing AppTest, terhadap Postgres sungguhan
+dengan data dummy yang masuk lewat db/ingestion.py.
+
+Catatan: jangan meng-import app.dashboard dari test; itu skrip Streamlit yang langsung berjalan saat di-import.
+"""
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import streamlit as st
+from streamlit.testing.v1 import AppTest
+
+from db.ingestion import upsert_measurements
+from scripts.generate_dummy_data import build_dummy_frame
+from tests.test_ingestion import frame, row
+
+PAGE = Path(__file__).resolve().parent.parent / "app" / "dashboard.py"
+END = datetime(2026, 9, 28, tzinfo=timezone.utc)
+SEVERITY = {"NG": 2, "WARNING": 1, "OK": 0}
+BADGE = re.compile(r"-badge\[(NG|WARNING|OK) · (\d+)%\]")
+
+
+@pytest.fixture
+def dash(pg_engine, monkeypatch):
+    st.cache_data.clear()                                 # cache antar test tidak boleh bocor
+    monkeypatch.setattr("db.connection.get_engine", lambda *a, **k: pg_engine)
+
+    def run(seed=True):
+        if seed:
+            upsert_measurements(pg_engine, build_dummy_frame(END))
+        return AppTest.from_file(str(PAGE), default_timeout=90).run()
+
+    yield SimpleNamespace(run=run, engine=pg_engine)
+    st.cache_data.clear()
+
+
+def n_charts(at):
+    return len(at.get("plotly_chart"))
+
+
+def badges(at):
+    """[(zona, persen)] sesuai urutan tampil."""
+    found = [BADGE.search(m.value) for m in at.markdown]
+    return [(m.group(1), int(m.group(2))) for m in found if m]
+
+
+def metrics(at):
+    return {m.label: m.value for m in at.metric}
+
+
+def refresh_button(at):
+    return [b for b in at.button if b.label == "Refresh Sekarang"][0]
+
+
+def test_renders_one_chart_per_item_cek_without_errors(dash):
+    at = dash.run()
+    assert not at.exception and not at.error
+    assert n_charts(at) == 10                             # 12 item cek - 2 tanpa standar
+    m = metrics(at)
+    assert m["Item cek"] == "10" and int(m["NG"]) + int(m["WARNING"]) + int(m["OK"]) == 10
+    assert all(int(m[z]) >= 1 for z in ("NG", "WARNING", "OK"))
+    assert any("2 item cek tanpa standar" in c.value for c in at.caption)
+
+
+def test_default_order_is_ng_then_warning_then_ok_by_descending_ratio(dash):
+    at = dash.run()
+    seq = badges(at)
+    assert len(seq) == 10
+    severities = [SEVERITY[z] for z, _ in seq]
+    assert severities == sorted(severities, reverse=True)
+    assert seq[0][0] == "NG" and seq[-1][0] == "OK"
+    pcts = [p for _, p in seq]
+    assert pcts == sorted(pcts, reverse=True)
+
+
+def test_ascending_toggle_reverses_the_order(dash):
+    at = dash.run()
+    desc = badges(at)
+    order = at.radio(key="f_order")
+    order.set_value(order.options[1]).run()               # opsi kedua = rasio rendah -> tinggi
+    asc = badges(at)
+    assert not at.exception
+    assert [SEVERITY[z] for z, _ in asc] == sorted(SEVERITY[z] for z, _ in asc)
+    assert asc[0][0] == "OK" and asc[-1][0] == "NG"
+    assert sorted(asc) == sorted(desc)                    # item yang sama, hanya urutan berbeda
+
+
+def test_peak_basis_orders_by_highest_ratio_in_range(dash):
+    at = dash.run()
+    basis = at.radio(key="f_basis")
+    basis.set_value(basis.options[1]).run()               # opsi kedua = rasio tertinggi dalam rentang
+    pcts = [p for _, p in badges(at)]
+    assert not at.exception and pcts == sorted(pcts, reverse=True) and len(pcts) == 10
+
+
+def test_filter_by_jenis_item_cek(dash):
+    at = dash.run()
+    at.multiselect(key="f_jenis").select("Demo Conrod · Op 30 Honing").run()
+    assert not at.exception
+    assert n_charts(at) == 3 and metrics(at)["Item cek"] == "3"
+    assert "Weight (info)" not in " ".join(m.value for m in at.markdown)
+
+
+def test_filter_by_item_cek_narrows_machine_options(dash):
+    at = dash.run()
+    at.multiselect(key="f_chars").select("Runout").run()
+    assert n_charts(at) == 1
+    assert at.multiselect(key="f_machines").options == ["GR-1", "GR-2", "GR-3"]
+
+
+def test_filter_by_machine_keeps_only_items_that_machine_works_on(dash):
+    at = dash.run()
+    at.multiselect(key="f_machines").select("CH-C").run()
+    assert not at.exception and n_charts(at) == 1         # hanya True Pos Hole 1 dikerjakan CH-C
+
+
+def test_date_range_filter_keeps_page_working(dash):
+    at = dash.run()
+    lo, hi = at.date_input(key="f_dates").value
+    at.date_input(key="f_dates").set_value((hi - timedelta(days=7), hi)).run()
+    assert not at.exception and n_charts(at) == 10
+
+
+def test_pagination_splits_grid_and_keeps_global_order(dash):
+    at = dash.run()
+    full = badges(at)
+    at.selectbox(key="f_pagesize").set_value(6).run()
+    assert n_charts(at) == 6 and badges(at) == full[:6]
+    at.selectbox(key="f_page").set_value(2).run()
+    assert not at.exception and n_charts(at) == 4 and badges(at) == full[6:]
+
+
+def test_grid_columns_option_does_not_change_content(dash):
+    at = dash.run()
+    before = badges(at)
+    at.selectbox(key="f_cols").set_value(2).run()
+    assert not at.exception and badges(at) == before and n_charts(at) == 10
+
+
+def test_shows_last_data_time(dash):
+    at = dash.run()
+    assert any("Data terakhir:" in m.value and "WIB" in m.value for m in at.markdown)
+
+
+def test_empty_database_shows_guidance_and_no_charts(dash):
+    at = dash.run(seed=False)
+    assert not at.exception and n_charts(at) == 0
+    assert any("Belum ada data" in i.value and "generate_dummy_data" in i.value for i in at.info)
+
+
+def test_database_failure_shows_message_instead_of_crashing(dash, monkeypatch):
+    def down(*a, **k):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("db.connection.get_engine", down)
+    at = dash.run(seed=False)
+    assert not at.exception
+    assert any("Tidak dapat membaca database" in e.value for e in at.error)
+
+
+def test_refresh_button_clears_cache_so_new_data_appears(dash):
+    at = dash.run()
+    assert n_charts(at) == 10
+
+    # data baru masuk: item cek ke-11. Tanpa refresh, cache (TTL 60 dtk) masih menyajikan 10.
+    new = ("Demo New", "Op X", "MC-9", "Fresh Item", END - timedelta(hours=2), *row()[5:])
+    upsert_measurements(dash.engine, frame(new))
+    at.run()
+    assert n_charts(at) == 10
+
+    refresh_button(at).click().run()
+    assert not at.exception and n_charts(at) == 11
