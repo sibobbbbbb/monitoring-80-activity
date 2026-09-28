@@ -4,7 +4,7 @@ dengan data dummy yang masuk lewat db/ingestion.py.
 Catatan: jangan meng-import app.dashboard dari test; itu skrip Streamlit yang langsung berjalan saat di-import.
 """
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +12,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from app.timeutil import WIB
 from db.ingestion import upsert_measurements
 from scripts.generate_dummy_data import build_dummy_frame
 from tests.test_ingestion import frame, row
@@ -116,11 +117,50 @@ def test_filter_by_machine_keeps_only_items_that_machine_works_on(dash):
     assert not at.exception and n_charts(at) == 1         # hanya True Pos Hole 1 dikerjakan CH-C
 
 
-def test_date_range_filter_keeps_page_working(dash):
+def range_caption(at):
+    return next(c.value for c in at.caption if c.value.startswith("Rentang tanggal:"))
+
+
+def test_default_range_is_all_data(dash):
     at = dash.run()
-    lo, hi = at.date_input(key="f_dates").value
-    at.date_input(key="f_dates").set_value((hi - timedelta(days=7), hi)).run()
+    assert at.button_group(key="f_preset").value == "Semua data"
+    assert range_caption(at) == "Rentang tanggal: 31 Aug 2026 – 28 Sep 2026 (WIB)"
+    assert not at.date_input                          # pemilih tanggal hanya muncul pada mode Kustom
+
+
+@pytest.mark.parametrize("preset, first_day", [
+    ("7 hari", "22 Sep 2026"), ("14 hari", "15 Sep 2026"), ("30 hari", "30 Aug 2026"), ("90 hari", "01 Jul 2026"),
+])
+def test_quick_ranges_count_back_from_the_latest_data_day(dash, preset, first_day):
+    at = dash.run()
+    at.button_group(key="f_preset").set_value(preset).run()
+    assert not at.exception
+    assert range_caption(at) == f"Rentang tanggal: {first_day} – 28 Sep 2026 (WIB)"
+    assert n_charts(at) == 10                         # data dummy padat: semua item cek punya data di rentang ini
+
+
+def test_custom_range_can_go_back_before_the_first_data_day(dash):
+    at = dash.run()
+    at.button_group(key="f_preset").set_value("Kustom").run()
+    picker = at.date_input(key="f_dates")
+    assert picker.min <= date(2026, 7, 1)             # tidak lagi dikunci ke tanggal data tertua (31 Agustus)
+    assert picker.max >= datetime.now(WIB).date()     # batas akhir tetap sampai hari ini atau data terbaru
+
+    picker.set_value((date(2026, 7, 1), date(2026, 7, 31))).run()      # sebelum ada data
+    assert not at.exception and n_charts(at) == 0
+    assert range_caption(at) == "Rentang tanggal: 01 Jul 2026 – 31 Jul 2026 (WIB)"
+    assert any("Tidak ada item cek" in i.value for i in at.info)
+
+    at.date_input(key="f_dates").set_value((date(2026, 9, 20), date(2026, 9, 28))).run()
     assert not at.exception and n_charts(at) == 10
+
+
+def test_incomplete_custom_range_waits_for_the_end_date(dash):
+    at = dash.run()
+    at.button_group(key="f_preset").set_value("Kustom").run()
+    at.date_input(key="f_dates").set_value((date(2026, 9, 20),)).run()
+    assert not at.exception and n_charts(at) == 0
+    assert any("Pilih tanggal akhir" in i.value for i in at.info)
 
 
 def test_pagination_splits_grid_and_keeps_global_order(dash):
@@ -132,11 +172,23 @@ def test_pagination_splits_grid_and_keeps_global_order(dash):
     assert not at.exception and n_charts(at) == 4 and badges(at) == full[6:]
 
 
+def test_grid_defaults_to_two_wide_columns(dash):
+    assert dash.run().selectbox(key="f_cols").value == 2
+
+
 def test_grid_columns_option_does_not_change_content(dash):
     at = dash.run()
     before = badges(at)
-    at.selectbox(key="f_cols").set_value(2).run()
-    assert not at.exception and badges(at) == before and n_charts(at) == 10
+    for cols in (1, 3, 4):
+        at.selectbox(key="f_cols").set_value(cols).run()
+        assert not at.exception and badges(at) == before and n_charts(at) == 10
+
+
+def test_single_item_still_renders_when_fewer_items_than_columns(dash):
+    at = dash.run()
+    at.multiselect(key="f_chars").select("Runout").run()
+    at.selectbox(key="f_cols").set_value(4).run()
+    assert not at.exception and n_charts(at) == 1
 
 
 def test_shows_last_data_time(dash):

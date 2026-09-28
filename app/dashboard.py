@@ -4,6 +4,7 @@ Urutan grid mengikuti rasio per item cek (NG dulu, lalu WARNING, lalu OK); tiap 
 XChart per mesin dengan garis USL, LSL, dan batas 80%. Dijalankan lewat router app/main.py.
 """
 from collections import Counter
+from datetime import date, datetime, timedelta
 from math import ceil
 
 import streamlit as st
@@ -23,6 +24,9 @@ ORDER_ASC = "Rasio rendah → tinggi (OK dulu)"
 BASIS_LATEST = "Rasio terakhir"
 BASIS_PEAK = "Rasio tertinggi dalam rentang"
 BADGE_COLORS = {"NG": "red", "WARNING": "orange", "OK": "green"}
+RANGE_PRESETS = {"7 hari": 7, "14 hari": 14, "30 hari": 30, "90 hari": 90}
+RANGE_ALL, RANGE_CUSTOM = "Semua data", "Kustom"
+EARLIEST_DAY = date(2000, 1, 1)
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -81,11 +85,22 @@ if bounds[0] is None:
 options = load_options()
 options["jenis"] = options["part"] + " · " + options["operation"]
 min_day, max_day = bounds[0].astimezone(WIB).date(), bounds[1].astimezone(WIB).date()
+today = datetime.now(WIB).date()
 
 with st.sidebar:
     st.header("Filter")
-    picked = st.date_input("Rentang tanggal (WIB)", value=(min_day, max_day),
-                           min_value=min_day, max_value=max_day, key="f_dates")
+    preset = st.segmented_control(
+        "Rentang waktu (WIB)", [*RANGE_PRESETS, RANGE_ALL, RANGE_CUSTOM], default=RANGE_ALL, key="f_preset",
+        help="N hari terakhir dihitung mundur dari tanggal data terbaru. Kustom: pilih tanggal mulai dan akhir bebas.",
+    ) or RANGE_ALL                                    # None bila pilihan dibatalkan -> semua data
+    if preset == RANGE_CUSTOM:
+        # batas awal dibuka lebar (tidak dikunci ke data tertua) agar bisa mundur sejauh apa pun
+        picked = st.date_input("Tanggal (mulai – akhir)", value=(min_day, max_day),
+                               min_value=EARLIEST_DAY, max_value=max(max_day, today), key="f_dates")
+    elif preset in RANGE_PRESETS:
+        picked = (max_day - timedelta(days=RANGE_PRESETS[preset] - 1), max_day)
+    else:
+        picked = (min_day, max_day)
     jenis_sel = st.multiselect("Jenis item cek (Part · Operation)", sorted(options["jenis"].unique()), key="f_jenis")
     scoped = options[options["jenis"].isin(jenis_sel)] if jenis_sel else options
     chars_sel = st.multiselect("Item cek (Characteristics)", sorted(scoped["characteristics"].unique()), key="f_chars")
@@ -98,13 +113,15 @@ with st.sidebar:
     basis = st.radio("Dasar urutan", [BASIS_LATEST, BASIS_PEAK], key="f_basis",
                      help="Terakhir: rasio terburuk dari pengukuran terakhir tiap mesin. "
                           "Tertinggi: rasio maksimum di seluruh rentang tanggal.")
-    n_cols = st.selectbox("Kolom grid", [2, 3, 4], index=1, key="f_cols")
+    n_cols = st.selectbox("Kolom grid", [1, 2, 3, 4], index=1, key="f_cols",
+                          help="Makin sedikit kolom, makin lebar chart. 1 = lebar penuh.")
     page_size = st.selectbox("Chart per halaman", [6, 12, 24, 48], index=1, key="f_pagesize")
 
 if len(picked) != 2:
     st.info("Pilih tanggal akhir pada rentang tanggal.")
     st.stop()
 
+st.caption(f"Rentang tanggal: {picked[0]:%d %b %Y} – {picked[1]:%d %b %Y} (WIB)")
 start, end = day_range_utc(picked[0], picked[1])
 jenis_pairs = tuple(sorted({(r.part, r.operation) for r in options[options["jenis"].isin(jenis_sel)].itertuples()}))
 f = Filters(start=start, end=end, jenis=jenis_pairs, characteristics=tuple(chars_sel), machines=tuple(machines_sel))
@@ -147,8 +164,9 @@ keys = tuple((r.part, r.operation, r.characteristics) for r in shown.itertuples(
 series = load_series(f, keys)
 colors = machine_colors(options["machine"])
 
-for i in range(0, len(shown), n_cols):
-    for cell, item in zip(st.columns(n_cols), list(shown.iloc[i:i + n_cols].itertuples())):
+width = min(n_cols, len(shown))     # sedikit item -> kartu memakai lebar penuh, bukan separuh kosong
+for i in range(0, len(shown), width):
+    for cell, item in zip(st.columns(width), list(shown.iloc[i:i + width].itertuples())):
         rows = series[(series["part"] == item.part) & (series["operation"] == item.operation)
                       & (series["characteristics"] == item.characteristics)]
         with cell, st.container(border=True):
