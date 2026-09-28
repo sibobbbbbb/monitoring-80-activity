@@ -2,6 +2,7 @@
 
 Validasi per baris; baris gagal dilaporkan (nomor baris + alasan) dan tidak membatalkan baris lain.
 """
+import io
 from dataclasses import dataclass
 from datetime import timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -39,6 +40,7 @@ class RowWarning:
     """Baris valid tapi tidak dipakai (mis. ditimpa baris lain dengan kunci sama)."""
     row_number: int
     reason: str
+    overwritten_by: Optional[int] = None  # nomor baris yang menimpa (duplikat kunci)
 
 
 class ImportResult(NamedTuple):
@@ -47,15 +49,24 @@ class ImportResult(NamedTuple):
     warnings: list[RowWarning]
 
 
-def read_file(path: Union[str, Path]) -> pd.DataFrame:
+def _read(source, suffix: str) -> pd.DataFrame:
     """Baca CSV/XLSX sebagai string mentah agar angka tidak lewat float."""
-    path = Path(path)
-    suffix = path.suffix.lower()
     if suffix == ".csv":
-        return pd.read_csv(path, dtype=str, keep_default_na=False)
+        # utf-8-sig: CSV dari Excel sering diawali BOM yang merusak nama kolom pertama
+        return pd.read_csv(source, dtype=str, keep_default_na=False, encoding="utf-8-sig")
     if suffix in (".xlsx", ".xlsm"):
-        return pd.read_excel(path, dtype=str, keep_default_na=False)
+        return pd.read_excel(source, dtype=str, keep_default_na=False)
     raise ValueError(f"Format file tidak didukung: {suffix}")
+
+
+def read_file(path: Union[str, Path]) -> pd.DataFrame:
+    path = Path(path)
+    return _read(path, path.suffix.lower())
+
+
+def read_bytes(data: bytes, filename: str) -> pd.DataFrame:
+    """Baca isi file yang sudah ada di memori (mis. hasil upload)."""
+    return _read(io.BytesIO(data), Path(filename).suffix.lower())
 
 
 def _clean(v) -> Optional[str]:
@@ -152,7 +163,8 @@ def parse_frame(
         label = f"machine_id={key[0]}, unit_id={key[1]}, item_ukur={key[2]}, measured_at={key[3]}"
         for r in earlier_rows:
             warnings.append(RowWarning(
-                r, f"Baris ditimpa oleh baris {final_row} (kunci sama: {label})"
+                r, f"Baris ditimpa oleh baris {final_row} (kunci sama: {label})",
+                overwritten_by=final_row,
             ))
     warnings.sort(key=lambda w: w.row_number)
 
@@ -179,5 +191,21 @@ def load_measurements(
         read_file(path),
         column_map=column_map,
         source_batch=source_batch or path.name,
+        source_utc_offset_hours=source_utc_offset_hours,
+    )
+
+
+def load_measurements_from_bytes(
+    data: bytes,
+    filename: str,
+    column_map: Mapping[str, str] = DEFAULT_COLUMN_MAP,
+    source_batch: Optional[str] = None,
+    source_utc_offset_hours: int = DEFAULT_SOURCE_UTC_OFFSET_HOURS,
+) -> ImportResult:
+    """Sama seperti load_measurements, tetapi dari isi file di memori (halaman upload)."""
+    return parse_frame(
+        read_bytes(data, filename),
+        column_map=column_map,
+        source_batch=source_batch or filename,
         source_utc_offset_hours=source_utc_offset_hours,
     )

@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine, func, select
 
-from db.ingestion import upsert_measurements
+from db.ingestion import UpsertResult, upsert_measurements
 from db.tables import measurements, metadata
 
 # SQLite menyimpan Numeric sebagai float; di Postgres tetap Decimal.
@@ -47,8 +47,8 @@ def count(engine):
 
 
 def test_insert_new_rows(engine):
-    n = upsert_measurements(engine, frame(row("U1"), row("U2", T1)))
-    assert n == 2
+    res = upsert_measurements(engine, frame(row("U1"), row("U2", T1)))
+    assert res == UpsertResult(inserted=2, updated=0, unchanged=0)
     rows = all_rows(engine)
     assert [r["unit_id"] for r in rows] == ["U1", "U2"]
     assert rows[0]["zone"] == "OK"
@@ -94,5 +94,43 @@ def test_null_ratio_for_no_standard(engine):
 
 
 def test_empty_frame_is_noop(engine):
-    assert upsert_measurements(engine, frame()) == 0
+    assert upsert_measurements(engine, frame()) == UpsertResult(0, 0, 0)
     assert count(engine) == 0
+
+
+def test_result_counts_new_updated_unchanged(engine):
+    first = upsert_measurements(engine, frame(row("U1"), row("U2", T1), row("U3", T1)))
+    assert first == UpsertResult(3, 0, 0)
+    second = upsert_measurements(engine, frame(
+        row("U1"),                                    # identik
+        row("U2", T1, value="10.3", ratio="0.6"),     # value berubah
+        row("U4", T1),                                # baru
+    ))
+    assert second == UpsertResult(inserted=1, updated=1, unchanged=1)
+    assert second.total == 3
+    assert count(engine) == 4
+
+
+def test_only_source_batch_change_counts_as_unchanged_but_batch_is_refreshed(engine):
+    upsert_measurements(engine, frame(row("U1", batch="b1")))
+    res = upsert_measurements(engine, frame(row("U1", batch="b2")))
+    assert res == UpsertResult(0, 0, 1)
+    assert all_rows(engine)[0]["source_batch"] == "b2"
+
+
+def test_changed_standard_counts_as_updated(engine):
+    upsert_measurements(engine, frame(row("U1")))
+    changed = ("M1", "U1", "Dia", T0, Decimal("10.2"), Decimal("10"), Decimal("11"),
+               Decimal("9.5"), Decimal("0.2"), "OK", "b1")           # usl 10.5 -> 11
+    assert upsert_measurements(engine, frame(changed)) == UpsertResult(0, 1, 0)
+
+
+def test_null_standards_compare_as_unchanged(engine):
+    r = ("M1", "U1", "Note", T0, Decimal("3.3"), None, None, None, None, "NO_STANDARD", "b1")
+    upsert_measurements(engine, frame(r))
+    assert upsert_measurements(engine, frame(r)) == UpsertResult(0, 0, 1)
+
+
+def test_duplicate_keys_in_frame_count_once(engine):
+    res = upsert_measurements(engine, frame(row("U1", value="10.2"), row("U1", value="10.3")))
+    assert res == UpsertResult(1, 0, 0)

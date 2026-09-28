@@ -29,8 +29,9 @@ def main(argv=None) -> int:
     for w in result.warnings:
         print(f"  WARNING baris {w.row_number}: {w.reason}")
 
-    n = upsert_measurements(get_engine(), result.data)
-    print(f"Upsert selesai: {n} baris")
+    res = upsert_measurements(get_engine(), result.data)
+    print(f"Upsert selesai: {res.inserted} baru, {res.updated} ter-update, "
+          f"{res.unchanged} tidak berubah")
     return 0
 
 

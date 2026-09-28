@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from adapters.file_adapter import MissingColumnsError, load_measurements
+from adapters.file_adapter import MissingColumnsError, load_measurements, load_measurements_from_bytes
 
 SAMPLE = Path(__file__).resolve().parent.parent / "data" / "sample_measurements.csv"
 HEADER = "Machine,Unit,Item,Measured At,Value,Nominal,USL,LSL\n"
@@ -74,6 +74,7 @@ class TestDuplicateKeys:
         assert len(warnings) == 1
         assert warnings[0].row_number == 2
         assert "baris 4" in warnings[0].reason
+        assert warnings[0].overwritten_by == 4
         assert "unit_id=U1" in warnings[0].reason
 
     def test_three_way_duplicate_reports_every_overwritten_row(self, tmp_path):
@@ -85,6 +86,7 @@ class TestDuplicateKeys:
         assert len(df) == 1 and df.iloc[0]["value"] == Decimal("10.3")
         assert [w.row_number for w in warnings] == [2, 3]
         assert all("baris 4" in w.reason for w in warnings)
+        assert [w.overwritten_by for w in warnings] == [4, 4]
 
     def test_same_instant_in_different_timezone_notation_is_duplicate(self, tmp_path):
         p = write_csv(tmp_path,
@@ -104,6 +106,40 @@ class TestDuplicateKeys:
     def test_no_duplicates_no_warnings(self):
         _, _, warnings = load_measurements(SAMPLE)
         assert warnings == []
+
+
+class TestFromBytes:
+    def test_same_result_as_file_path(self):
+        data = SAMPLE.read_bytes()
+        from_bytes = load_measurements_from_bytes(data, "upload.csv")
+        from_path = load_measurements(SAMPLE)
+        pd.testing.assert_frame_equal(
+            from_bytes.data.drop(columns="source_batch"), from_path.data.drop(columns="source_batch"))
+        assert set(from_bytes.data["source_batch"]) == {"upload.csv"}
+
+    def test_explicit_source_batch(self):
+        res = load_measurements_from_bytes(SAMPLE.read_bytes(), "a.csv", source_batch="batch-1")
+        assert set(res.data["source_batch"]) == {"batch-1"}
+
+    def test_csv_with_utf8_bom_from_excel(self):
+        data = b"\xef\xbb\xbf" + SAMPLE.read_bytes()
+        res = load_measurements_from_bytes(data, "excel.csv")
+        assert len(res.data) == 6 and res.failures == []
+
+    def test_xlsx_bytes(self, tmp_path):
+        p = tmp_path / "x.xlsx"
+        pd.read_csv(SAMPLE, dtype=str).to_excel(p, index=False)
+        res = load_measurements_from_bytes(p.read_bytes(), "x.xlsx")
+        assert len(res.data) == 6 and res.failures == []
+
+    def test_missing_required_column(self):
+        data = b"Machine,Unit,Item,Measured At,Nominal,USL,LSL\nM1,U1,D,2026-01-05 08:00:00,10,10.5,9.5\n"
+        with pytest.raises(MissingColumnsError, match="Value"):
+            load_measurements_from_bytes(data, "x.csv")
+
+    def test_unsupported_extension(self):
+        with pytest.raises(ValueError, match="tidak didukung"):
+            load_measurements_from_bytes(b"a", "x.txt")
 
 
 class TestFailures:

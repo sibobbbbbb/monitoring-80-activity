@@ -11,7 +11,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
-from db.ingestion import CHUNK_SIZE, upsert_measurements
+from db.ingestion import CHUNK_SIZE, UpsertResult, upsert_measurements
 from db.tables import MEASUREMENT_KEY, measurements
 from tests.test_ingestion import T0, T1, all_rows, count, frame, row
 
@@ -24,8 +24,8 @@ def test_schema_sql_matches_table_definition(pg_engine):
 
 
 def test_insert_new_rows_exact_decimal(pg_engine):
-    n = upsert_measurements(pg_engine, frame(row("U1"), row("U2", T1)))
-    assert n == 2
+    res = upsert_measurements(pg_engine, frame(row("U1"), row("U2", T1)))
+    assert res == UpsertResult(inserted=2, updated=0, unchanged=0)
     rows = all_rows(pg_engine)
     assert [r["unit_id"] for r in rows] == ["U1", "U2"]
     r = rows[0]
@@ -97,17 +97,35 @@ def test_null_ratio_for_no_standard(pg_engine):
 
 
 def test_empty_frame_is_noop(pg_engine):
-    assert upsert_measurements(pg_engine, frame()) == 0
+    assert upsert_measurements(pg_engine, frame()) == UpsertResult(0, 0, 0)
     assert count(pg_engine) == 0
 
 
 def test_more_rows_than_chunk_size(pg_engine):
     n = CHUNK_SIZE * 2 + 100
     df = frame(*[row(f"U{i:05d}") for i in range(n)])
-    assert upsert_measurements(pg_engine, df) == n
+    assert upsert_measurements(pg_engine, df) == UpsertResult(n, 0, 0)
     assert count(pg_engine) == n
-    upsert_measurements(pg_engine, df)          # idempoten juga lintas chunk
+    # idempoten juga lintas chunk, dan klasifikasi lintas chunk konsisten
+    assert upsert_measurements(pg_engine, df) == UpsertResult(0, 0, n)
     assert count(pg_engine) == n
+
+
+def test_high_precision_reupload_is_unchanged_not_updated(pg_engine):
+    df = frame(row("U1", value="10.123456789012345678901234567890",
+                   ratio="0.333333333333333333333333333333"))
+    upsert_measurements(pg_engine, df)
+    assert upsert_measurements(pg_engine, df) == UpsertResult(0, 0, 1)
+    changed = frame(row("U1", value="10.123456789012345678901234567891",   # beda di digit terakhir
+                        ratio="0.333333333333333333333333333333"))
+    assert upsert_measurements(pg_engine, changed) == UpsertResult(0, 1, 0)
+
+
+def test_result_counts_new_updated_unchanged(pg_engine):
+    upsert_measurements(pg_engine, frame(row("U1"), row("U2", T1)))
+    res = upsert_measurements(pg_engine, frame(
+        row("U1"), row("U2", T1, value="10.3", ratio="0.6"), row("U3", T1)))
+    assert res == UpsertResult(inserted=1, updated=1, unchanged=1)
 
 
 def test_emitted_sql_uses_native_postgres_on_conflict(pg_engine):
