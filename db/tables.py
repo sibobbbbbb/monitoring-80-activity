@@ -6,18 +6,24 @@ from sqlalchemy import (
 
 metadata = MetaData()
 
-MEASUREMENT_KEY = ("machine_id", "unit_id", "item_ukur", "measured_at")
+MEASUREMENT_KEY = ("part", "operation", "machine", "characteristics", "measured_at")
+
+
+def _id_column() -> Column:
+    # BigInteger tidak autoincrement di SQLite; varian Integer dipakai untuk test.
+    return Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+
 
 measurements = Table(
     "measurements",
     metadata,
-    # BigInteger tidak autoincrement di SQLite; varian Integer dipakai untuk test.
-    Column("id", BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True),
-    Column("machine_id", Text, nullable=False),
-    Column("unit_id", Text, nullable=False),
-    Column("item_ukur", Text, nullable=False),
+    _id_column(),
+    Column("part", Text, nullable=False),
+    Column("operation", Text, nullable=False),
+    Column("machine", Text, nullable=False),
+    Column("characteristics", Text, nullable=False),
     Column("measured_at", DateTime(timezone=True), nullable=False),
-    Column("value", Numeric, nullable=False),
+    Column("value", Numeric, nullable=False),   # XChart
     Column("nominal", Numeric),
     Column("usl", Numeric),
     Column("lsl", Numeric),
@@ -27,4 +33,20 @@ measurements = Table(
     Column("ingested_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("zone IN ('OK', 'WARNING', 'NG', 'NO_STANDARD')", name="ck_measurements_zone"),
     UniqueConstraint(*MEASUREMENT_KEY, name="uq_measurements_key"),
+)
+
+spec_master = Table(
+    "spec_master",
+    metadata,
+    _id_column(),
+    Column("part", Text, nullable=False),
+    Column("operation", Text, nullable=False),
+    Column("machine", Text, nullable=False),
+    Column("characteristics", Text, nullable=False),
+    Column("nominal", Numeric),
+    Column("usl", Numeric),
+    Column("lsl", Numeric),
+    Column("berlaku_sejak", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("part", "operation", "machine", "characteristics", "berlaku_sejak",
+                     name="uq_spec_master_key"),
 )

@@ -40,16 +40,22 @@ def _classify(conn: Connection, records: list[dict]) -> UpsertResult:
     """Bandingkan record dengan baris yang sudah ada (kunci sama) sebelum upsert."""
     key_cols = [measurements.c[k] for k in MEASUREMENT_KEY]
     cmp_cols = [measurements.c[c] for c in _COMPARE_COLUMNS]
+    n_key = len(MEASUREMENT_KEY)
+
+    def _key(values: tuple) -> tuple:
+        # elemen terakhir kunci = measured_at; SQLite membuang tz, jadi samakan ke UTC
+        return tuple(values[:-1]) + (_utc(values[-1]),)
+
     existing: dict[tuple, tuple] = {}
     for i in range(0, len(records), CHUNK_SIZE):
         keys = [tuple(r[k] for k in MEASUREMENT_KEY) for r in records[i:i + CHUNK_SIZE]]
         stmt = select(*key_cols, *cmp_cols).where(tuple_(*key_cols).in_(keys))
         for row in conn.execute(stmt):
-            existing[(row[0], row[1], row[2], _utc(row[3]))] = tuple(row[4:])
+            existing[_key(row[:n_key])] = tuple(row[n_key:])
 
     inserted = updated = unchanged = 0
     for r in records:
-        old = existing.get((r["machine_id"], r["unit_id"], r["item_ukur"], _utc(r["measured_at"])))
+        old = existing.get(_key(tuple(r[k] for k in MEASUREMENT_KEY)))
         if old is None:
             inserted += 1
         elif all(_num_equal(o, r[c]) for o, c in zip(old, _COMPARE_COLUMNS)):

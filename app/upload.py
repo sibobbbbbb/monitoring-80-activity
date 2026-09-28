@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
-from adapters.column_mapping import DEFAULT_COLUMN_MAP
+from adapters.column_mapping import DEFAULT_MAPPING
 from adapters.file_adapter import load_measurements_from_bytes
 from app.timeutil import WIB
 from db.connection import get_engine
@@ -31,18 +31,28 @@ def _preview_table(data: pd.DataFrame) -> pd.DataFrame:
     for col in ("value", "nominal", "usl", "lsl", "ratio"):
         t[col] = t[col].astype(float)  # hanya untuk tampilan
     t = t.drop(columns="source_batch")
-    t.columns = ["Mesin", "Unit", "Item", "Waktu (WIB)", "Nilai", "Nominal", "USL", "LSL", "Rasio", "Zona"]
+    t.columns = ["Part", "Operation", "Mesin", "Characteristics", "Waktu (WIB)", "XChart",
+                 "Nominal", "USL", "LSL", "Rasio", "Zona"]
     return t
 
 
-st.title("Upload data pengukuran")
-st.caption("Unggah file CSV atau XLSX hasil export. Waktu tanpa zona dianggap WIB dan disimpan sebagai UTC. "
+st.title("Upload export FEXQMS (fallback)")
+st.info("Jalur fallback untuk investigasi satu item cek atau backfill historis. Export FEXQMS hanya bisa "
+        "per satu item cek, jadi upload manual bukan jalur utama monitoring.")
+st.caption("Unggah export Control Chart FEXQMS (XLSX atau CSV). Nilai yang dipakai adalah kolom XChart; "
+           "USL/LSL dibaca dari header file. Waktu tanpa zona dianggap WIB dan disimpan sebagai UTC. "
            "Data baru langsung tampil di Dashboard setelah dikonfirmasi.")
 
-with st.expander("Format kolom yang diharapkan"):
-    st.table(pd.DataFrame({"Field": list(DEFAULT_COLUMN_MAP), "Nama kolom di file": list(DEFAULT_COLUMN_MAP.values())}))
-    st.caption("Wajib: machine_id, unit_id, item_ukur, measured_at, value. nominal, usl, dan lsl boleh kosong; "
-               "baris tanpa usl dan lsl disimpan sebagai NO_STANDARD.")
+with st.expander("Format file yang diharapkan"):
+    st.markdown("**Blok header** (label di kiri, nilai di sel kanannya):")
+    st.table(pd.DataFrame({"Field": list(DEFAULT_MAPPING.header_labels),
+                           "Label di file": list(DEFAULT_MAPPING.header_labels.values())}))
+    st.markdown("**Tabel data** (judul kolom):")
+    st.table(pd.DataFrame({"Field": list(DEFAULT_MAPPING.table_columns),
+                           "Kolom di file": list(DEFAULT_MAPPING.table_columns.values())}))
+    st.caption("Wajib: Part, Operation, Machine, Characteristics di header; Sample Date Time dan XChart di tabel. "
+               "USL/LSL boleh kosong (LSL 0 dianggap nilai, bukan kosong); tanpa USL dan LSL baris disimpan "
+               "sebagai NO_STANDARD. Sheet ringkasan pelanggaran (Sheet1) diabaikan.")
 
 uploaded = st.file_uploader("File CSV atau XLSX", type=["csv", "xlsx"], key="upload_file")
 if uploaded is None:
@@ -86,7 +96,7 @@ if failures:
 
 if duplicates:
     st.subheader("Baris duplikat")
-    st.caption("Kunci (mesin, unit, item, waktu) sama dalam satu file: baris terakhir yang dipakai.")
+    st.caption("Kunci (part, operation, mesin, characteristics, waktu) sama dalam satu file: baris terakhir yang dipakai.")
     st.dataframe(pd.DataFrame([{"Baris ditimpa": w.row_number, "Ditimpa oleh baris": w.overwritten_by,
                                 "Keterangan": w.reason} for w in duplicates]),
                  hide_index=True, key="duplicates_table")
