@@ -112,6 +112,15 @@ class TestItemChart:
         legend = [t for t in item_chart(df, self.colors).data if t.showlegend]
         assert [(t.name, t.line.color) for t in legend] == [("M1", self.colors["M1"]), ("M2", self.colors["M2"])]
 
+    def test_clicking_a_legend_entry_toggles_that_machines_data_line(self):
+        """Trace legenda dan trace data harus satu legendgroup, kalau tidak klik legenda tidak berefek."""
+        df = pd.concat([rows("M1", [0.05, 0.06]), rows("M2", [0.07, 0.08])])
+        fig = item_chart(df, self.colors)
+        for m in ("M1", "M2"):
+            group = [t for t in fig.data if t.name == m]
+            assert len(group) == 2 and {t.legendgroup for t in group} == {m}
+            assert sum(bool(t.showlegend) for t in group) == 1     # satu entri legenda per mesin
+
     def test_single_machine_has_no_legend(self):
         fig = item_chart(rows("M1", [0.05, 0.06]), self.colors)
         assert len(self.lines(fig)) == 1 and fig.layout.showlegend is False and len(fig.data) == 1

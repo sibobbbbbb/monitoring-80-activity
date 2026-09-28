@@ -107,7 +107,7 @@ def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 300) ->
         last = [False] * (len(g) - 1) + [True]
         flagged = [z != "OK" for z in g["zone"]]
         fig.add_trace(go.Scatter(
-            x=g["x"], y=g["y"], mode="lines+markers", name=m, showlegend=False,
+            x=g["x"], y=g["y"], mode="lines+markers", name=m, showlegend=False, legendgroup=m,
             line=dict(color=_rgba(base, LINE_ALPHA), width=LINE_WIDTH),
             marker=dict(
                 color=[ZONE_COLORS[z] if z != "OK" else base for z in g["zone"]],
@@ -119,7 +119,8 @@ def item_chart(rows: pd.DataFrame, colors: dict[str, str], height: int = 300) ->
             hovertemplate=f"{m}<br>%{{x|%d %b %H:%M}}<br>XChart: %{{y}}<br>Rasio: %{{customdata:.1%}}<extra></extra>",
         ))
         if multi:   # warna titik berubah per zona, jadi legenda memakai trace khusus berwarna mesin
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=m, showlegend=True,
+            # legendgroup sama dengan trace data: klik nama mesin di legenda menyembunyikan/menampilkan garisnya
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode="lines", name=m, showlegend=True, legendgroup=m,
                                      line=dict(color=base, width=3)))
 
     # Batas per mesin (dari baris terbaru). Sama untuk semua mesin -> satu set garis berlabel + latar zona;
